@@ -1,0 +1,45 @@
+# Python 构建产物
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# 打包 / 分发
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+
+# 工具下载产物 / 运行期资源 / 日志
+*.log
+logs/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 环境变量 / 凭证
+.env
+!.env.example
+
+# uv
+# lock 文件应提交，仅忽略 uv 自身缓存
+.uv/
+.uv-cache/
+
+# PyCharm / VS Code
+.idea/
+.vscode/
+*.iml
+
+# mypy / ruff
+.mypy_cache/
+.ruff_cache/
+
+# 操作系统
+.DS_Store
+Thumbs.db

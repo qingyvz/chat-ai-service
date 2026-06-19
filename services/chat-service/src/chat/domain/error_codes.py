@@ -1,0 +1,30 @@
+from common.core.domain import IErrorCode
+
+
+class ChatErrorCode(IErrorCode):
+    # --- 会话相关 ---
+    SESSION_NOT_FOUND = (40001, "目标会话不存在")
+    CONTEXT_LIMIT_EXCEEDED = (40002, "对话上下文超出模型限制")
+    AGENT_NOT_FOUND = (40003, "Agent 不存在或未发布")
+    SESSION_AGENT_CHANGE_FORBIDDEN = (40004, "已有消息的会话不能切换 Agent")
+
+    # --- Provider 相关 ---
+    PROVIDER_NOT_FOUND = (40011, "供应商不存在")
+    PROVIDER_ALREADY_EXISTS = (40012, "供应商已存在")
+    PROVIDER_IN_USE = (40013, "供应商仍被模型使用")
+    PROVIDER_FORBIDDEN = (40014, "无权访问该供应商")
+
+    # --- 模型相关 ---
+    MODEL_NOT_FOUND = (40021, "模型不存在")
+    MODEL_ALREADY_EXISTS = (40022, "模型已存在")
+    MODEL_MAPPING_NOT_FOUND = (40023, "模型供应商映射不存在")
+    MODEL_MAPPING_ALREADY_EXISTS = (40024, "模型供应商映射已存在")
+    MODEL_SCOPE_MISMATCH = (40025, "模型、供应商或映射作用域不一致")
+    MODEL_PROVIDER_TYPE_UNSUPPORTED = (40026, "供应商类型不支持该模型")
+
+    # --- 模型相关 ---
+    LLM_GENERATION_FAILED = (50011, "大模型生成失败")
+
+    # --- 记忆相关 ---
+    MEMORY_NOT_FOUND = (40001, "目标记忆不存在")
+    MEMORY_OPERATION_FAILED = (50021, "记忆操作失败")

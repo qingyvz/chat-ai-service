@@ -1,0 +1,25 @@
+[project]
+name = "common"
+version = "0.1.0"
+description = "Common Library for Python Microservices"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "qingyvz", email = "chnzhenhao@gmail.com" }
+]
+dependencies = [
+    "fastapi",
+    "starlette",
+    "pydantic",
+    "loguru",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp",
+    "opentelemetry-instrumentation-fastapi",
+    "opentelemetry-instrumentation-httpx",
+    "opentelemetry-instrumentation-logging",
+    "opentelemetry-instrumentation-aiokafka",
+    "aiokafka",
+    "httpx",
+    "nacos-sdk-python",
+]

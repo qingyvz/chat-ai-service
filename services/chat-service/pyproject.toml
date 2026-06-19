@@ -1,0 +1,26 @@
+[project]
+name = "chat-service"
+version = "0.1.0"
+description = "Chat Microservice: RAG & LLM Orchestration"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "qingyvz", email = "chnzhenhao@gmail.com" }
+]
+dependencies = [
+    "fastapi",
+    "pydantic",
+    "pydantic-settings",
+    "uvicorn[standard]",
+    "dependency_injector",
+    "litellm",
+    "mem0ai",
+    "openai",
+    "beanie",
+    "redis[asyncio]",
+    "nacos-sdk-python",
+    "pyyaml",
+    "jieba",
+    "zeroentropy",
+    "common",
+]

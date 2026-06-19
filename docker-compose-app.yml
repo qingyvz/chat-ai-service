@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  chat-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_DIR: chat-service
+        SERVICE_PKG: chat
+        SERVICE_PORT: "19904"
+    image: ${DOCKER_REGISTRY}/chat-ai-chat:${APP_VERSION}
+    container_name: chat-service
+    restart: always
+    environment:
+      - TZ=Asia/Shanghai
+      - PROFILE=prod
+      - NACOS_SERVER_ADDR=nacos:8848
+      - NACOS_NAMESPACE_ID=
+      - NACOS_GROUP=DEFAULT_GROUP
+      - NACOS_USERNAME=${NACOS_USERNAME}
+      - NACOS_PASSWORD=${NACOS_PASSWORD}
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=19904
+      - LOG_LEVEL=INFO
+      - OTEL_SERVICE_NAME=chat-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+    volumes:
+      - ../logs/chat:/logs
+    networks:
+      cloud-net:
+        aliases:
+          - chat-service
+
+networks:
+  cloud-net:
+    external: true
+    name: cloud-net

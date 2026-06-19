@@ -1,0 +1,19 @@
+[project]
+name = "chat-ai-server-py"
+version = "0.1.0"
+description = "Chat AI Python Microservices Monorepo"
+requires-python = ">=3.9"
+dependencies = [
+    "litellm>=1.81.3",
+    "chat-service",
+    "common",
+]
+
+[tool.uv.workspace]
+members = [
+    "services/*",   # 扫描 services 下的所有子文件夹
+]
+
+[tool.uv.sources]
+chat-service = { workspace = true }
+common = { workspace = true }
