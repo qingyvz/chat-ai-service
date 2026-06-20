@@ -1,4 +1,4 @@
-from chat.application.agents.models import (
+from chat.application.agents.agent import (
     Agent,
     AgentMemoryPolicy,
     AgentModelPolicy,

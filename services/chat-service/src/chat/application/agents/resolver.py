@@ -3,7 +3,7 @@
 from common.logger import error
 
 from chat.application.agents.default_agent import DEFAULT_AGENT_ID, build_default_agent
-from chat.application.agents.models import Agent
+from chat.application.agents.agent import Agent
 
 
 class AgentResolver(Protocol):
