@@ -1,9 +1,11 @@
 ﻿from copy import deepcopy
-from typing import List, Optional
+from typing import List, Optional, Protocol
 from datetime import datetime, timezone
 import uuid
 
-from chat.application.agents import AgentMemoryPolicy
+from fastapi import BackgroundTasks
+
+from chat.application.agents import AgentMemoryPolicy, AgentSpec
 from chat.application.chat_context_assembler import WindowedMessages
 from common.logger import error
 
@@ -17,9 +19,28 @@ from chat.domain.repositories.model_repo import ModelRequestInfo
 from common.kafka.producer import KafkaProducerClient
 
 
-class ChatTurnFinalizer:
+class TurnFinalizer(Protocol):
+    """扫尾抽象：不假设 background_tasks，subagent 可改 inline 同步实现"""
+    async def finalize(
+        self,
+        *,
+        background_tasks: Optional[BackgroundTasks],
+        user_id: str,
+        session_id: str,
+        user_query: str,
+        agent_spec: AgentSpec,
+        resolved_model: ModelRequestInfo,
+        usage_tokens: int,
+        chat_record_messages: List[ChatMessage],
+        windowed_history_messages: Optional[WindowedMessages],
+        session_summary: Optional[str],
+    ) -> None:
+        ...
+
+
+class SessionTurnFinalizer:
     """
-    负责对话完成后的全部写入操作: Token计费、持久化（Redis 追加、MongoDB 持久化归档、Memory 长期记忆摄入）、标题生成、摘要压缩
+    会话场景扫尾：经 background_tasks 异步执行 Token计费、持久化（Redis 追加、MongoDB 归档、Memory 摄入）、标题生成、摘要压缩
     """
 
     def __init__(
@@ -39,6 +60,59 @@ class ChatTurnFinalizer:
         self.hot_context_repo = hot_context_repo
         self.provider_repo = provider_repo
         self.kafka_producer = kafka_producer
+
+    async def finalize(
+        self,
+        *,
+        background_tasks: Optional[BackgroundTasks],
+        user_id: str,
+        session_id: str,
+        user_query: str,
+        agent_spec: AgentSpec,
+        resolved_model: ModelRequestInfo,
+        usage_tokens: int,
+        chat_record_messages: List[ChatMessage],
+        windowed_history_messages: Optional[WindowedMessages],
+        session_summary: Optional[str],
+    ) -> None:
+        """登记本轮扫尾任务：使用 FastAPI BackgroundTasks 在响应返回用户后异步执行"""
+        if background_tasks is None:
+            return
+
+        memory_policy = agent_spec.memory_policy
+
+        # 发送 Token 计费
+        background_tasks.add_task(
+            self.send_token_billing,
+            user_id=user_id,
+            resolved_model=resolved_model,
+            usage_tokens=usage_tokens,
+            group_id=agent_spec.billing_group_id,
+        )
+        # 将新消息写入 Redis 和 MongoDB，并摄入 Memory 长期记忆
+        background_tasks.add_task(
+            self.persist_messages,
+            user_id=user_id,
+            session_id=session_id,
+            chat_record_messages=chat_record_messages,
+            memory_policy=memory_policy,
+        )
+        # 调用轻量级模型生成并更新会话的全局摘要
+        if memory_policy.enable_chat_memory and memory_policy.enable_chat_memory_summary and windowed_history_messages.needs_compression:
+            background_tasks.add_task(
+                self.summarize_and_compress,
+                session_id=session_id,
+                windowed_history_messages=windowed_history_messages,
+                chat_record_messages=chat_record_messages,
+                existing_summary=session_summary,
+                memory_policy=memory_policy,
+            )
+        # 自动生成标题
+        if agent_spec.auto_generate_title:
+            background_tasks.add_task(
+                self.auto_generate_title,
+                session_id=session_id, user_id=user_id, user_query=user_query,
+            )
 
     async def send_token_billing(
         self,

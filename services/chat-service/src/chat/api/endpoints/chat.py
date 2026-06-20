@@ -13,7 +13,7 @@ from chat.api.vercel_formats import (
 from common.security import require_login
 from common.logger import error, info
 from chat.api.schemas.chat import ChatRequest
-from chat.application.chat_turn_coordinator import ChatTurnCoordinator
+from chat.application.runtime import AgentTurnRuntime
 from chat.container import Container
 from chat.core.config.app_settings import settings
 from chat.domain.repositories import SessionRepository
@@ -51,7 +51,7 @@ async def chat_completions(
         req: ChatRequest,
         background_tasks: BackgroundTasks,
         user_id: str = Depends(require_login),
-        coordinator: ChatTurnCoordinator = Depends(Provide[Container.chat_turn_coordinator]),
+        coordinator: AgentTurnRuntime = Depends(Provide[Container.agent_turn_runtime]),
         session_repo: SessionRepository = Depends(Provide[Container.session_repo]),
 ):
     """

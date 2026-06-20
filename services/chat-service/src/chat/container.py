@@ -19,7 +19,7 @@ from chat.core.persistence import (
     MongoProviderRepository,
     RedisHotContext,
 )
-from chat.application.chat_turn_coordinator import ChatTurnCoordinator
+from chat.application.runtime import AgentTurnRuntime
 from chat.application.agents import (
     DefaultAgentResolver,
 )
@@ -142,8 +142,8 @@ class Container(containers.DeclarativeContainer):
     )
 
     # Application 层组件
-    chat_turn_coordinator = providers.Factory(
-        ChatTurnCoordinator,
+    agent_turn_runtime = providers.Factory(
+        AgentTurnRuntime,
         llm=llm_provider,
         memory=memory_provider,
         model_repo=model_repo,
