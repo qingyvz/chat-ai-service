@@ -180,6 +180,31 @@ class ChatContextAssembler:
 
         return messages
 
+    def build_executor_context(
+        self,
+        session_id: str,
+        executor_system_prompt: str,
+        subtask_title: str,
+        subtask_description: str,
+        prior_results: Optional[List[tuple]] = None,
+    ) -> List[ChatMessage]:
+        """为 Plan-Execute Executor 造隔离上下文：不带会话历史，只给执行角色提示 + 前序产出 + 当前子任务"""
+        messages: List[ChatMessage] = [
+            ChatMessage(session_id=session_id, role=Role.SYSTEM, content=executor_system_prompt)
+        ]
+
+        blocks: List[str] = []
+        # 前序步骤的结论作为隔离上下文注入（按需加载，而非全量历史）
+        if prior_results:
+            done_lines = "\n".join([f"- {title}: {summary}" for title, summary in prior_results])
+            blocks.append(f"<completed_steps>\n{done_lines}\n</completed_steps>")
+
+        subtask_block = f"<subtask>\n{subtask_title}\n{subtask_description}\n</subtask>"
+        user_content = ("\n\n".join(blocks) + "\n\n" + subtask_block) if blocks else subtask_block
+
+        messages.append(ChatMessage(session_id=session_id, role=Role.USER, content=user_content))
+        return messages
+
     @staticmethod
     def _skills_block(available_skills: List[SkillMeta]) -> str:
         skill_lines = [

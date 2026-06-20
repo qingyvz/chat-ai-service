@@ -59,7 +59,7 @@ class AgentTurnRuntime:
         # 共享服务
         self._model_resolver = ModelResolver(model_repo)
         self._tool_scope_provider = ToolScopeProvider(skill_matcher, tool_registry)
-        self._strategy_factory = StrategyFactory(AgentStepRunner(llm))
+        self._strategy_factory = StrategyFactory(AgentStepRunner(llm), llm)
 
     # -------------------------------------------------------------------------
     # 公共入口
@@ -77,6 +77,7 @@ class AgentTurnRuntime:
             user_defined_deny_tool_names: Optional[Set[str]] = None,
             user_defined_on_demand_skill_ids: Optional[Set[str]] = None,
             user_defined_force_enabled_skill_ids: Optional[Set[str]] = None,
+            think_type_override: Optional[str] = None,
     ):
         # agent → 取 spec
         agent = await self._agent_provider.resolve(session_id, user_id)
@@ -130,8 +131,8 @@ class AgentTurnRuntime:
             tool_scope=tool_scope,
         )
 
-        # 由 think_type 选策略并跑循环；runtime 只透传事件 + 事后把 ctx 交给 finalizer
-        strategy = self._strategy_factory.create(agent_spec.think_policy.think_type)
+        # 由 think_type 选策略并跑循环；override 优先于 agent spec；runtime 只透传事件 + 事后把 ctx 交给 finalizer
+        strategy = self._strategy_factory.create(think_type_override or agent_spec.think_policy.think_type)
         try:
             async for event in strategy.run(ctx):
                 yield to_vercel_sse(event)

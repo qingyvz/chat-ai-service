@@ -7,6 +7,7 @@ from chat.api.vercel_formats import (
     text_start, text_delta, text_end,
     reasoning_start, reasoning_delta, reasoning_end,
     tool_input_start, tool_input_available, tool_output_available, error,
+    data_plan, data_plan_step,
 )
 from chat.application.events import (
     StreamEvent, ErrorEvent,
@@ -14,6 +15,7 @@ from chat.application.events import (
     TextStartEvent, TextDeltaEvent, TextEndEvent,
     ReasoningStartEvent, ReasoningDeltaEvent, ReasoningEndEvent,
     ToolInputStartEvent, ToolInputAvailableEvent, ToolOutputAvailableEvent,
+    PlanCreatedEvent, PlanStepStatusEvent, PlanUpdatedEvent,
 )
 
 
@@ -49,4 +51,8 @@ def to_vercel_sse(event: StreamEvent) -> str:
         )
     if isinstance(event, ToolOutputAvailableEvent):
         return tool_output_available(tool_call_id=event.call_id, output=event.output)
+    if isinstance(event, (PlanCreatedEvent, PlanUpdatedEvent)):
+        return data_plan(plan_id=event.plan_id, steps=event.steps)
+    if isinstance(event, PlanStepStatusEvent):
+        return data_plan_step(step_id=event.step_id, status=event.status, result_summary=event.result_summary)
     raise TypeError(f"Unknown StreamEvent subclass: {type(event).__name__}")

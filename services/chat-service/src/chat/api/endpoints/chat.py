@@ -45,29 +45,15 @@ async def _vercel_generator(chat_gen, model_name: str):
         yield stream_done()
 
 
-@router.post("/completions")
-@inject
-async def chat_completions(
+async def _stream_chat(
         req: ChatRequest,
         background_tasks: BackgroundTasks,
-        user_id: str = Depends(require_login),
-        coordinator: AgentTurnRuntime = Depends(Provide[Container.agent_turn_runtime]),
-        session_repo: SessionRepository = Depends(Provide[Container.session_repo]),
-):
-    """
-    请求格式:
-       {
-         "session_id": "xxx",
-         "query": "你好",
-         "model": "Mongo ObjectId string",
-         "provider_id": "Mongo ObjectId string",
-         "states": [{
-            "key": "selected_text",
-            "value": "xxx",
-            "disabled": false}
-         ]
-       }
-    """
+        user_id: str,
+        coordinator: AgentTurnRuntime,
+        session_repo: SessionRepository,
+        think_type_override: str | None = None,
+) -> StreamingResponse:
+    """两个 endpoint 共用：校验 → 调 handle_chat（差别仅 think_type_override）→ 包成 Vercel SSE"""
     if not req.query:
         raise HTTPException(status_code=400, detail="缺少查询内容")
 
@@ -91,6 +77,7 @@ async def chat_completions(
         user_defined_deny_tool_names=req.user_defined_deny_tool_names,
         user_defined_on_demand_skill_ids=req.user_defined_on_demand_skill_ids,
         user_defined_force_enabled_skill_ids=req.user_defined_force_enabled_skill_ids,
+        think_type_override=think_type_override,
     )
 
     return StreamingResponse(
@@ -102,4 +89,43 @@ async def chat_completions(
             "x-vercel-ai-ui-message-stream": "v1",
         },
     )
+
+
+@router.post("/completions")
+@inject
+async def chat_completions(
+        req: ChatRequest,
+        background_tasks: BackgroundTasks,
+        user_id: str = Depends(require_login),
+        coordinator: AgentTurnRuntime = Depends(Provide[Container.agent_turn_runtime]),
+        session_repo: SessionRepository = Depends(Provide[Container.session_repo]),
+):
+    """
+    请求格式:
+       {
+         "session_id": "xxx",
+         "query": "你好",
+         "model": "Mongo ObjectId string",
+         "provider_id": "Mongo ObjectId string",
+         "states": [{
+            "key": "selected_text",
+            "value": "xxx",
+            "disabled": false}
+         ]
+       }
+    """
+    return await _stream_chat(req, background_tasks, user_id, coordinator, session_repo)
+
+
+@router.post("/completions/plan-execute")
+@inject
+async def chat_completions_plan_execute(
+        req: ChatRequest,
+        background_tasks: BackgroundTasks,
+        user_id: str = Depends(require_login),
+        coordinator: AgentTurnRuntime = Depends(Provide[Container.agent_turn_runtime]),
+        session_repo: SessionRepository = Depends(Provide[Container.session_repo]),
+):
+    """Plan-and-Execute 编排入口：DTO 与 /completions 一致，仅强制 think_type=PlanAndExecute"""
+    return await _stream_chat(req, background_tasks, user_id, coordinator, session_repo, think_type_override="PlanAndExecute")
 
