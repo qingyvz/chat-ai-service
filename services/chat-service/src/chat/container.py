@@ -18,6 +18,7 @@ from chat.core.persistence import (
     MongoModelRepository,
     MongoProviderRepository,
     RedisHotContext,
+    RedisSubAgentRepository,
 )
 from chat.application.runtime import AgentTurnRuntime
 from chat.application.agents import (
@@ -58,6 +59,7 @@ class Container(containers.DeclarativeContainer):
     model_repo = providers.Singleton(MongoModelRepository)
     provider_repo = providers.Singleton(MongoProviderRepository)
     hot_context_repo = providers.Singleton(RedisHotContext)
+    subagent_repo = providers.Singleton(RedisSubAgentRepository)
 
     # 内部 RPC：Nacos 服务发现 + 通用 httpx 客户端 + file-storage typed facade
     service_discovery = providers.Singleton(
@@ -154,6 +156,7 @@ class Container(containers.DeclarativeContainer):
         tool_registry=tool_registry,
         kafka_producer=kafka_producer,
         skill_matcher=skill_matcher,
+        subagent_repo=subagent_repo,
         agent_resolver=agent_resolver,
     )
 

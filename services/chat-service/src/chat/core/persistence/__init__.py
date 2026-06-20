@@ -3,6 +3,7 @@ from .mongo.session_repository import MongoSessionRepository
 from .mongo.model_repository import MongoModelRepository
 from .mongo.provider_repository import MongoProviderRepository
 from .redis.hot_context import RedisHotContext
+from .redis.subagent import RedisSubAgentRepository
 
 __all__ = [
     "MongoMessageRepository",
@@ -10,4 +11,5 @@ __all__ = [
     "MongoModelRepository",
     "MongoProviderRepository",
     "RedisHotContext",
+    "RedisSubAgentRepository",
 ]

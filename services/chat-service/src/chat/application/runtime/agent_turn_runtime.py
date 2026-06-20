@@ -11,7 +11,7 @@ from chat.domain.repositories import SessionRepository, MessageRepository, HotCo
 from common.core.exceptions import ServiceException
 from chat.application.chat_context_assembler import ChatContextAssembler
 from chat.application.chat_turn_finalizer import SessionTurnFinalizer
-from chat.application.agents import AgentResolver
+from chat.application.agents import AgentResolver, SubAgentRepository
 from chat.application.events import ErrorEvent
 from chat.api.vercel_sse_mapper import to_vercel_sse
 from chat.application.tools.skill_tools.utils.skill_matcher import SkillMatcher
@@ -22,6 +22,7 @@ from chat.application.runtime.agent_provider import SessionAgentProvider
 from chat.application.runtime.context_provider import SessionContextProvider
 from chat.application.runtime.model_resolver import ModelResolver
 from chat.application.runtime.tool_scope_provider import ToolScopeProvider
+from chat.application.runtime.subagent_runtime import SubAgentTurnRuntime
 
 
 class AgentTurnRuntime:
@@ -42,6 +43,7 @@ class AgentTurnRuntime:
             tool_registry: ToolRegistry,
             kafka_producer: KafkaProducerClient,
             skill_matcher: SkillMatcher,
+            subagent_repo: SubAgentRepository,
             agent_resolver: AgentResolver | None = None,
     ):
         self._assembler = ChatContextAssembler(
@@ -59,7 +61,15 @@ class AgentTurnRuntime:
         # 共享服务
         self._model_resolver = ModelResolver(model_repo)
         self._tool_scope_provider = ToolScopeProvider(skill_matcher, tool_registry)
-        self._strategy_factory = StrategyFactory(AgentStepRunner(llm), llm)
+        step_runner = AgentStepRunner(llm)
+        # subagent 子 runtime（Plan-Execute Executor 派遣多角色用，复用共享服务 + Redis 临时存储）
+        sub_runtime = SubAgentTurnRuntime(
+            step_runner=step_runner,
+            tool_scope_provider=self._tool_scope_provider,
+            assembler=self._assembler,
+            subagent_repo=subagent_repo,
+        )
+        self._strategy_factory = StrategyFactory(step_runner, llm, sub_runtime)
 
     # -------------------------------------------------------------------------
     # 公共入口

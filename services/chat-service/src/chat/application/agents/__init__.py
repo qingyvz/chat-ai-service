@@ -7,6 +7,7 @@ from chat.application.agents.agent import (
     AgentSpec,
 )
 from chat.application.agents.resolver import AgentResolver, CompositeAgentResolver, DefaultAgentResolver
+from chat.application.agents.subagent_repo import SubAgentRepository
 
 __all__ = [
     "DEFAULT_AGENT_ID",
@@ -19,4 +20,5 @@ __all__ = [
     "AgentResolver",
     "CompositeAgentResolver",
     "DefaultAgentResolver",
+    "SubAgentRepository",
 ]

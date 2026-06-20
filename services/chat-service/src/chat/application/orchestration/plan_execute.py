@@ -2,8 +2,6 @@ import json
 import uuid
 from typing import AsyncIterator, Dict, List, Tuple
 
-from common.logger import warn
-from chat.core.config.app_settings import settings
 from chat.domain.entities import ChatMessage, Role, Plan, PlanStep
 from chat.domain.interfaces import LLMProvider
 from chat.application.events import (
@@ -15,7 +13,6 @@ from chat.application.events import (
 )
 from chat.application.orchestration.base import OrchestrationContext, OrchestrationStrategy
 from chat.application.orchestration.delta_interpreter import StepDeltaInterpreter
-from chat.application.orchestration.step_runner import AgentStepRunner
 
 _PLANNER_DIRECTIVE = (
     "Break the request in <user_query> into an ordered list of concrete, self-contained subtasks "
@@ -23,10 +20,6 @@ _PLANNER_DIRECTIVE = (
     "Output STRICT JSON only — no prose, no code fence:\n"
     '{"steps":[{"title":"短标题","description":"可独立执行的子任务说明"}]}\n'
     "Keep the steps minimal; each description must be executable in isolation."
-)
-_EXECUTOR_SYSTEM_PROMPT = (
-    "You are an execution agent. Complete ONLY the single subtask in <subtask>, using any prior results "
-    "in <completed_steps> as context. Be concise and produce a direct, usable result for this subtask."
 )
 _SYNTH_SYSTEM_PROMPT = (
     "You are a synthesis agent. Given the user's original request and the results of each executed subtask, "
@@ -37,9 +30,9 @@ _SYNTH_SYSTEM_PROMPT = (
 class PlanAndExecuteStrategy(OrchestrationStrategy):
     """Plan-and-Execute（v1 线性单角色）：Planner 一次性产出计划 → 逐步隔离执行 → Synthesizer 汇总终答"""
 
-    def __init__(self, step_runner: AgentStepRunner, llm: LLMProvider) -> None:
-        self._step_runner = step_runner
+    def __init__(self, llm: LLMProvider, sub_runtime) -> None:
         self._llm = llm
+        self._sub_runtime = sub_runtime  # SubAgentTurnRuntime（鸭子类型，避免 runtime↔orchestration 循环导入）
 
     async def run(self, ctx: OrchestrationContext) -> AsyncIterator[StreamEvent]:
         rm = ctx.raw_materials
@@ -59,21 +52,20 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
         plan = await self._plan(ctx)
         yield PlanCreatedEvent(plan_id=plan.plan_id, steps=self._steps_payload(plan))
 
-        # 2. 逐步执行（v1 线性）
+        # 2. 逐步执行（v1 线性）：每步派一个 subagent 子 runtime（多角色分工）
         prior_results: List[Tuple[str, str]] = []
         for step in plan.steps:
             step.status = "in_progress"
             yield PlanStepStatusEvent(step_id=step.step_id, status="in_progress")
 
-            executor_messages = ctx.assembler.build_executor_context(
-                session_id=ctx.session_id,
-                executor_system_prompt=_EXECUTOR_SYSTEM_PROMPT,
-                subtask_title=step.title,
-                subtask_description=step.description,
-                prior_results=prior_results,
-            )
             holder: Dict[str, str] = {"text": ""}
-            async for ev in self._run_executor(ctx, executor_messages, holder):
+            async for ev in self._sub_runtime.run(
+                parent_ctx=ctx,
+                role="executor",
+                step=step,
+                prior_results=prior_results,
+                holder=holder,
+            ):
                 yield ev
 
             step.status = "completed"
@@ -110,35 +102,6 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
         ctx.usage_tokens += result.usage_tokens
         content = result.raw.choices[0].message.content or ""
         return Plan(plan_id=f"plan_{uuid.uuid4().hex}", steps=self._parse_plan_steps(content, fallback_query=rm.user_query))
-
-    async def _run_executor(self, ctx: OrchestrationContext, messages: List[ChatMessage], holder: Dict[str, str]) -> AsyncIterator[StreamEvent]:
-        """单个子任务执行：复用 ReAct 内核（AgentStepRunner 循环），最终回复落到 holder"""
-        max_iterations = ctx.agent_spec.agent_max_iterations or settings.AGENT_MAX_ITERATIONS
-        for iteration in range(max_iterations):
-            step_finish_event = None
-            async for item in self._step_runner.run(
-                messages=messages,
-                session_id=ctx.session_id,
-                model_name=ctx.model.model_name,
-                model_id=ctx.model.model_id,
-                api_base=ctx.model.api_base_url,
-                api_key=ctx.model.api_key,
-                iteration=iteration,
-                tool_scope=ctx.tool_scope,
-            ):
-                if isinstance(item, StepFinishEvent):
-                    step_finish_event = item
-                yield item
-
-            assert step_finish_event is not None
-            ctx.usage_tokens += step_finish_event.usage_tokens
-            if step_finish_event.is_finished:
-                holder["text"] = step_finish_event.final_assistant_message.content or ""
-                return
-            else:
-                messages.extend(step_finish_event.intermediate_messages)
-        else:
-            warn("plan-execute executor loop exhausted.", session_id=ctx.session_id)
 
     async def _synthesize(self, ctx: OrchestrationContext, plan: Plan) -> AsyncIterator[StreamEvent]:
         """汇总各步结果，流式产出终答文本"""
