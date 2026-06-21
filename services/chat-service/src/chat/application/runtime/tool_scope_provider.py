@@ -29,11 +29,13 @@ class ToolScopeProvider:
         user_defined_allow_tool_names: Optional[Set[str]] = None,
         user_defined_deny_tool_names: Optional[Set[str]] = None,
         user_defined_on_demand_skill_ids: Optional[Set[str]] = None,
+        runtime_context: Optional[dict] = None,
     ) -> Tuple[ToolScope, List[SkillMeta]]:
-        # 构建工具上下文
+        # 构建工具上下文（runtime_context 透传 subagent_spawner/父模型/父 spec 等给工具执行时读取）
         tool_context: dict[str, Any] = {
             "session_id": session_id,
             "user_id": user_id,
+            **(runtime_context or {}),
         }
 
         # 构建 Skill 视图：返回本轮可展示给 LLM 的 Skill metadata，由 LLM 判断是否加载

@@ -20,7 +20,7 @@ from chat.core.persistence import (
     RedisHotContext,
     RedisSubAgentRepository,
 )
-from chat.application.runtime import AgentTurnRuntime
+from chat.application.runtime import build_session_runtime
 from chat.application.agents import (
     DefaultAgentResolver,
 )
@@ -29,6 +29,7 @@ from chat.application.tools.skill_tools import LoadSkillAssetTool
 from chat.application.tools.skill_tools import LoadSkillTool
 from chat.application.tools.core import ToolRegistry
 from chat.application.tools.session_tools.get_historical_chat_messages_tool import GetHistoricalChatMessagesTool
+from chat.application.tools.subagent_tools import CreateSubAgentTool, CallSubAgentTool
 from chat.core.config.nacos import nacos_client_manager
 from chat.service_client import FileStorageClient, AIAssetClient, ResourceClient
 from common.cloud.service_discovery import ServiceDiscovery
@@ -131,11 +132,16 @@ class Container(containers.DeclarativeContainer):
         resource_client=resource_client,
         file_loader=oss_file_loader,
     )
+    # subagent 工具（无状态；机制由 runtime 注入 tool_context 的 subagent_spawner 承载）
+    create_subagent_tool = providers.Singleton(CreateSubAgentTool)
+    call_subagent_tool = providers.Singleton(CallSubAgentTool)
 
     tool_providers = providers.List(
         search_history_tool,
         load_skill_tool,
         load_skill_asset_tool,
+        create_subagent_tool,
+        call_subagent_tool,
     )
 
     tool_registry = providers.Singleton(
@@ -145,7 +151,7 @@ class Container(containers.DeclarativeContainer):
 
     # Application 层组件
     agent_turn_runtime = providers.Factory(
-        AgentTurnRuntime,
+        build_session_runtime,
         llm=llm_provider,
         memory=memory_provider,
         model_repo=model_repo,

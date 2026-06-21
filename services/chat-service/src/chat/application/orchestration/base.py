@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 
-from chat.application.agents import AgentSpec
+from chat.application.agents import AgentInfo
 from chat.application.chat_context_assembler import ChatContextAssembler
 from chat.application.events import StreamEvent
 from chat.application.tools import ToolScope
@@ -28,7 +28,7 @@ class OrchestrationContext:
     """一轮编排的共享上下文：runtime 备料、策略读料并回写记账（record_messages / usage_tokens）"""
     session_id: str
     user_id: str
-    agent_spec: AgentSpec
+    agent_info: AgentInfo
     model: ModelRequestInfo
     raw_materials: RawMaterials
     assembler: ChatContextAssembler

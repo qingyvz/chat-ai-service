@@ -1,12 +1,13 @@
-﻿from copy import deepcopy
-from typing import List, Optional, Protocol
+﻿from __future__ import annotations
+
+from copy import deepcopy
+from typing import List, Optional, Protocol, TYPE_CHECKING
 from datetime import datetime, timezone
 import uuid
 
 from fastapi import BackgroundTasks
 
 from chat.application.agents import AgentMemoryPolicy, AgentSpec
-from chat.application.chat_context_assembler import WindowedMessages
 from common.logger import error
 
 from chat.core.config.app_settings import settings
@@ -17,6 +18,9 @@ from chat.domain.interfaces.memory import MemoryProvider
 from chat.domain.repositories import MessageRepository, HotContextRepository, SessionRepository, ProviderRepository
 from chat.domain.repositories.model_repo import ModelRequestInfo
 from common.kafka.producer import KafkaProducerClient
+
+if TYPE_CHECKING:
+    from chat.application.runtime.context_provider import WindowedMessages
 
 
 class TurnFinalizer(Protocol):
@@ -76,7 +80,14 @@ class SessionTurnFinalizer:
         session_summary: Optional[str],
     ) -> None:
         """登记本轮扫尾任务：使用 FastAPI BackgroundTasks 在响应返回用户后异步执行"""
+        # 无 background_tasks（subagent inline 场景）：只 inline 计费，不做持久化/摘要/标题
         if background_tasks is None:
+            await self.send_token_billing(
+                user_id=user_id,
+                resolved_model=resolved_model,
+                usage_tokens=usage_tokens,
+                group_id=agent_spec.billing_group_id,
+            )
             return
 
         memory_policy = agent_spec.memory_policy

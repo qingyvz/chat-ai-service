@@ -96,7 +96,7 @@ class AgentSpec(BaseModel):
     think_policy: AgentThinkingPolicy = Field(default_factory=AgentThinkingPolicy)
 
 
-class Agent(BaseModel):
+class AgentInfo(BaseModel):
     agent_id: str
     name: str
     description: str = ""

@@ -9,6 +9,7 @@ from dependency_injector.wiring import inject, Provide
 from chat.api.vercel_formats import (
     message_start, message_finish, stream_done, abort, error as sse_error,
 )
+from chat.api.vercel_sse_mapper import to_vercel_sse
 
 from common.security import require_login
 from common.logger import error, info
@@ -28,7 +29,7 @@ async def _vercel_generator(chat_gen, model_name: str):
         yield message_start(message_id)
 
         async for event in chat_gen:
-            yield event
+            yield to_vercel_sse(event)
 
         yield message_finish()
         yield stream_done()

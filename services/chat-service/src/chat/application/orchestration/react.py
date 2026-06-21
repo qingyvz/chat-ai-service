@@ -48,7 +48,7 @@ class ReActStrategy(OrchestrationStrategy):
             },
         ))
 
-        max_iterations = ctx.agent_spec.agent_max_iterations or settings.AGENT_MAX_ITERATIONS
+        max_iterations = ctx.agent_info.spec.agent_max_iterations or settings.AGENT_MAX_ITERATIONS
         for iteration in range(max_iterations):
             step_finish_event = None
             async for item in self._step_runner.run(

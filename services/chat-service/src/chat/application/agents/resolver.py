@@ -3,11 +3,11 @@
 from common.logger import error
 
 from chat.application.agents.default_agent import DEFAULT_AGENT_ID, build_default_agent
-from chat.application.agents.agent import Agent
+from chat.application.agents.agent_info import AgentInfo
 
 
 class AgentResolver(Protocol):
-    async def resolve(self, agent_id: str | None) -> Agent | None:
+    async def resolve(self, agent_id: str | None) -> AgentInfo | None:
         ...
 
 
@@ -15,7 +15,7 @@ class DefaultAgentResolver:
     def __init__(self) -> None:
         self._default_agent = build_default_agent()
 
-    async def resolve(self, agent_id: str | None) -> Agent | None:
+    async def resolve(self, agent_id: str | None) -> AgentInfo | None:
         if agent_id is None or agent_id == DEFAULT_AGENT_ID:
             return self._default_agent
         return None
@@ -31,7 +31,7 @@ class CompositeAgentResolver:
         self._primary = primary
         self._fallback = fallback or DefaultAgentResolver()
 
-    async def resolve(self, agent_id: str | None) -> Agent | None:
+    async def resolve(self, agent_id: str | None) -> AgentInfo | None:
         if self._primary is not None and agent_id is not None:
             try:
                 agent = await self._primary.resolve(agent_id)
