@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any, List, Optional
 
 from beanie import PydanticObjectId
 
 from chat.domain.entities.model import Model, ModelScope, ModelProviderMapping
-from chat.domain.entities.provider import Provider
+from chat.domain.entities.provider import Provider, ProviderType
 
 @dataclass(frozen=True)
 class ModelInfo:
@@ -22,10 +22,22 @@ class ModelRequestInfo:
     model: Model
     mapping: ModelProviderMapping
     provider: Provider
+    runtime_options: dict = field(default_factory=dict)
 
     @property
     def model_id(self) -> PydanticObjectId:
         return self.model.id
+
+    @property
+    def base_url(self) -> Optional[str]:
+        return self.provider.api_base_url
+
+    @property
+    def provider_type(self) -> ProviderType:
+        return self.provider.type
+
+    def with_runtime_options(self, runtime_options: dict[str, Any]) -> "ModelRequestInfo":
+        return replace(self, runtime_options=runtime_options)
 
     @property
     def provider_id(self) -> PydanticObjectId:

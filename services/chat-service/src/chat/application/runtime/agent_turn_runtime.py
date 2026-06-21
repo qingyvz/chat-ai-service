@@ -18,6 +18,7 @@ from chat.application.chat_turn_finalizer import SessionTurnFinalizer
 from chat.application.tools.skill_tools.utils.skill_matcher import SkillMatcher
 from chat.application.tools.core import ToolRegistry
 from chat.application.orchestration import AgentStepRunner, OrchestrationContext, RawMaterials, StrategyFactory
+from chat.application.token_counter import TokenCounter
 from chat.application.runtime.agent_provider import SessionAgentProvider, SubAgentProvider, build_subagent_info
 from chat.application.runtime.context_provider import SessionContextProvider, SubAgentContextProvider
 from chat.application.runtime.model_resolver import SessionModelResolver, InheritedModelResolver
@@ -213,12 +214,13 @@ def build_session_runtime(
     kafka_producer: KafkaProducerClient,
     skill_matcher: SkillMatcher,
     subagent_repo: SubAgentRepository,
+    token_counter: TokenCounter,
     agent_resolver: AgentResolver | None = None,
 ) -> AgentTurnRuntime:
     """装配会话根轮：Session* 三件 + 共享服务 + subagent_spawner（供 subagent 工具调用）"""
     assembler = ChatContextAssembler()
     tool_scope_provider = ToolScopeProvider(skill_matcher, tool_registry)
-    step_runner = AgentStepRunner(llm)
+    step_runner = AgentStepRunner(llm, token_counter)
     finalizer = SessionTurnFinalizer(
         llm=llm, memory=memory,
         message_repo=message_repo, session_repo=session_repo, hot_context_repo=hot_context_repo,

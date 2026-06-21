@@ -13,7 +13,7 @@ from common.logger import error
 from chat.core.config.app_settings import settings
 from chat.domain.entities import ChatMessage, Role
 from chat.domain.entities.model import ModelScope
-from chat.domain.interfaces.llm import LLMProvider
+from chat.domain.interfaces.llm import TextCompletionProvider
 from chat.domain.interfaces.memory import MemoryProvider
 from chat.domain.repositories import MessageRepository, HotContextRepository, SessionRepository, ProviderRepository
 from chat.domain.repositories.model_repo import ModelRequestInfo
@@ -49,7 +49,7 @@ class SessionTurnFinalizer:
 
     def __init__(
         self,
-        llm: LLMProvider,
+        llm: TextCompletionProvider,
         memory: MemoryProvider,
         message_repo: MessageRepository,
         session_repo: SessionRepository,

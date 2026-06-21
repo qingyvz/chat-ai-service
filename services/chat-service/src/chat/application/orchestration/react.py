@@ -54,10 +54,7 @@ class ReActStrategy(OrchestrationStrategy):
             async for item in self._step_runner.run(
                 messages=messages,
                 session_id=ctx.session_id,
-                model_name=ctx.model.model_name,
-                model_id=ctx.model.model_id,
-                api_base=ctx.model.api_base_url,
-                api_key=ctx.model.api_key,
+                model_request=ctx.model,
                 iteration=iteration,
                 tool_scope=ctx.tool_scope,
             ):

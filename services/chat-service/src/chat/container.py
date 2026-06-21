@@ -21,6 +21,7 @@ from chat.core.persistence import (
     RedisSubAgentRepository,
 )
 from chat.application.runtime import build_session_runtime
+from chat.application.token_counter import TokenCounter
 from chat.application.agents import (
     DefaultAgentResolver,
 )
@@ -53,6 +54,7 @@ def _build_registry(tool_providers: List[providers.Provider]) -> ToolRegistry:
 class Container(containers.DeclarativeContainer):
     """依赖注入容器，管理单例对象的生命周期。"""
     llm_provider = providers.Singleton(LiteLLMAdapter)
+    token_counter = providers.Singleton(TokenCounter)
     memory_provider = providers.Singleton(Mem0Adapter)
 
     session_repo = providers.Singleton(MongoSessionRepository)
@@ -163,6 +165,7 @@ class Container(containers.DeclarativeContainer):
         kafka_producer=kafka_producer,
         skill_matcher=skill_matcher,
         subagent_repo=subagent_repo,
+        token_counter=token_counter,
         agent_resolver=agent_resolver,
     )
 

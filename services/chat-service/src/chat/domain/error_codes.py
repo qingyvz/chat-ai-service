@@ -27,6 +27,7 @@ class ChatErrorCode(IErrorCode):
 
     # --- 编排相关 ---
     SUBAGENT_TOOLS_UNAVAILABLE = (40031, "Plan-and-Execute 需要 create_subagent/call_subagent 工具，但当前 agent 未启用")
+    MODEL_RUNTIME_OPTIONS_INVALID = (40032, "模型运行参数不合法")
 
     # --- 记忆相关 ---
     MEMORY_NOT_FOUND = (40001, "目标记忆不存在")

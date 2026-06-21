@@ -3,8 +3,10 @@ import uuid
 from typing import AsyncIterator, Dict, List, Tuple
 
 from chat.domain.entities import ChatMessage, Role, Plan, PlanStep
+from chat.domain.entities.message import MessageModelInfo
 from chat.domain.error_codes import ChatErrorCode
 from chat.domain.interfaces import LLMProvider
+from chat.domain.interfaces.llm import LLMEventType
 from common.core.exceptions import ServiceException
 from chat.application.events import (
     PlanCreatedEvent,
@@ -119,23 +121,18 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
             ChatMessage(session_id=ctx.session_id, role=Role.USER, content=self._build_synth_input(ctx.raw_materials.user_query, plan)),
         ]
 
-        text_id = f"txt_{uuid.uuid4().hex}"
-        reasoning_id = f"rsn_{uuid.uuid4().hex}"
-        interpreter = StepDeltaInterpreter(text_id=text_id, reasoning_id=reasoning_id)
+        interpreter = StepDeltaInterpreter()
 
         yield StepStartEvent()
         usage_tokens = 0
-        async for chunk in self._llm.stream_chat_completion(
+        async for provider_event in self._llm.stream_chat_completion(
             messages=synth_messages,
-            model_name=ctx.model.model_name,
-            api_base=ctx.model.api_base_url,
-            api_key=ctx.model.api_key,
+            model_request=ctx.model,
         ):
-            usage_tokens += chunk.usage_tokens
-            choices = chunk.raw.choices
-            if choices:
-                for event in interpreter.consume(choices[0].delta):
-                    yield event
+            if provider_event.type == LLMEventType.USAGE and provider_event.usage:
+                usage_tokens += provider_event.usage.total_tokens
+            for event in interpreter.consume(provider_event):
+                yield event
         for event in interpreter.close():
             yield event
 
@@ -144,8 +141,10 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
             session_id=ctx.session_id,
             role=Role.ASSISTANT,
             model_id=ctx.model.model_id,
+            model_info=MessageModelInfo.from_model_request(ctx.model),
             content=interpreter.assistant_content or "",
             reasoning_content=interpreter.assistant_reasoning or None,
+            token_usage=usage_tokens,
         )
         ctx.record_messages.append(final_message)
         yield StepFinishEvent(is_finished=True, final_assistant_message=final_message, usage_tokens=usage_tokens)
