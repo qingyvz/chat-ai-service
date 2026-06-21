@@ -6,10 +6,10 @@ from chat.application.tools.core.llm.invocation import ToolInvocation
 from chat.application.tools.core.llm.renderer import tool_result_renderer
 from chat.domain.entities import ChatMessage, Role
 from chat.domain.entities.message import MessageModelInfo
-from chat.domain.interfaces import LLMProvider
 from chat.domain.interfaces.llm import LLMEventType
 from chat.domain.repositories.model_repo import ModelRequestInfo
 from chat.domain.error_codes import ChatErrorCode
+from chat.application.llm_provider_resolver import LLMProviderResolver
 from chat.application.token_counter import TokenCounter
 from common.core.exceptions import ServiceException
 from chat.application.events import (
@@ -26,8 +26,8 @@ from chat.application.orchestration.delta_interpreter import StepDeltaInterprete
 class AgentStepRunner:
     """单步原语：一次 LLM turn + 工具执行，被各编排策略（ReAct / Plan-Execute Executor）共用"""
 
-    def __init__(self, llm_provider: LLMProvider, token_counter: TokenCounter) -> None:
-        self._llm_provider = llm_provider
+    def __init__(self, llm_provider_resolver: LLMProviderResolver, token_counter: TokenCounter) -> None:
+        self._llm_provider_resolver = llm_provider_resolver
         self._token_counter = token_counter
         self._tool_dispatcher = ToolDispatcher()
 
@@ -44,13 +44,16 @@ class AgentStepRunner:
 
         interpreter = StepDeltaInterpreter()
 
+        # 按 model_request 选具体 provider adapter
+        llm_provider = self._llm_provider_resolver.resolve(model_request)
+
         # 仅在模型与 provider 均支持工具时才传 schema
-        tool_schemas = tool_scope.schemas() if model_request.support_tools and self._llm_provider.supports_tools() else []
+        tool_schemas = tool_scope.schemas() if model_request.support_tools and llm_provider.supports_tools() else []
 
         token_usage = 0
         try:
             # provider 内部解析原生协议并产出 LLMStreamEvent
-            async for provider_event in self._llm_provider.stream_chat_completion(
+            async for provider_event in llm_provider.stream_chat_completion(
                 messages=messages,
                 model_request=model_request,
                 tools=tool_schemas or None,

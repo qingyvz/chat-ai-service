@@ -9,6 +9,10 @@ from chat.core.config.app_settings import settings
 from chat.core.config.bootstrap_settings import bootstrap_settings
 from chat.core.providers import (
     LiteLLMAdapter,
+    QwenAdapter,
+    OpenAIAdapter,
+    AnthropicAdapter,
+    GeminiAdapter,
     Mem0Adapter,
     OssFileLoader,
 )
@@ -22,6 +26,7 @@ from chat.core.persistence import (
 )
 from chat.application.runtime import build_session_runtime
 from chat.application.token_counter import TokenCounter
+from chat.application.llm_provider_resolver import LLMProviderResolver
 from chat.application.agents import (
     DefaultAgentResolver,
 )
@@ -53,7 +58,19 @@ def _build_registry(tool_providers: List[providers.Provider]) -> ToolRegistry:
 
 class Container(containers.DeclarativeContainer):
     """依赖注入容器，管理单例对象的生命周期。"""
-    llm_provider = providers.Singleton(LiteLLMAdapter)
+    llm_provider = providers.Singleton(LiteLLMAdapter)  # 也是 TextCompletionProvider（planner/摘要/标题）
+    qwen_adapter = providers.Singleton(QwenAdapter)
+    openai_adapter = providers.Singleton(OpenAIAdapter)
+    anthropic_adapter = providers.Singleton(AnthropicAdapter)
+    gemini_adapter = providers.Singleton(GeminiAdapter)
+    llm_resolver = providers.Singleton(
+        LLMProviderResolver,
+        qwen_adapter=qwen_adapter,
+        openai_adapter=openai_adapter,
+        anthropic_adapter=anthropic_adapter,
+        gemini_adapter=gemini_adapter,
+        litellm_adapter=llm_provider,
+    )
     token_counter = providers.Singleton(TokenCounter)
     memory_provider = providers.Singleton(Mem0Adapter)
 
@@ -154,7 +171,8 @@ class Container(containers.DeclarativeContainer):
     # Application 层组件
     agent_turn_runtime = providers.Factory(
         build_session_runtime,
-        llm=llm_provider,
+        llm_resolver=llm_resolver,
+        text_provider=llm_provider,
         memory=memory_provider,
         model_repo=model_repo,
         provider_repo=provider_repo,

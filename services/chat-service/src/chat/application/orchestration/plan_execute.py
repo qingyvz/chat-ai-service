@@ -5,8 +5,8 @@ from typing import AsyncIterator, Dict, List, Tuple
 from chat.domain.entities import ChatMessage, Role, Plan, PlanStep
 from chat.domain.entities.message import MessageModelInfo
 from chat.domain.error_codes import ChatErrorCode
-from chat.domain.interfaces import LLMProvider
-from chat.domain.interfaces.llm import LLMEventType
+from chat.domain.interfaces.llm import LLMEventType, TextCompletionProvider
+from chat.application.llm_provider_resolver import LLMProviderResolver
 from common.core.exceptions import ServiceException
 from chat.application.events import (
     PlanCreatedEvent,
@@ -37,8 +37,9 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
     spawn 机制不在策略内，落在两个工具里；策略只负责"产计划 + 发 to-do 事件 + 逐步调工具"。
     """
 
-    def __init__(self, llm: LLMProvider) -> None:
-        self._llm = llm
+    def __init__(self, text_provider: TextCompletionProvider, resolver: LLMProviderResolver) -> None:
+        self._text_provider = text_provider
+        self._resolver = resolver
 
     async def run(self, ctx: OrchestrationContext) -> AsyncIterator[StreamEvent]:
         raw_materials = ctx.raw_materials
@@ -103,7 +104,7 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
         )
         messages.append(ChatMessage(session_id=ctx.session_id, role=Role.USER, content=_PLANNER_DIRECTIVE))
 
-        result = await self._llm.chat_completion(
+        result = await self._text_provider.chat_completion(
             messages=messages,
             model_name=ctx.model.model_name,
             temperature=0.2,
@@ -125,7 +126,8 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
 
         yield StepStartEvent()
         usage_tokens = 0
-        async for provider_event in self._llm.stream_chat_completion(
+        llm_provider = self._resolver.resolve(ctx.model)
+        async for provider_event in llm_provider.stream_chat_completion(
             messages=synth_messages,
             model_request=ctx.model,
         ):

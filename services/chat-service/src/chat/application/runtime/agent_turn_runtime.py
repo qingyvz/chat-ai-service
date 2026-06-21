@@ -4,17 +4,21 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 from beanie import PydanticObjectId
 from fastapi import BackgroundTasks
 
+from jsonschema import Draft202012Validator, SchemaError, ValidationError
+
 from common.logger import error
 from common.core.exceptions import ServiceException
 from common.kafka.producer import KafkaProducerClient
-from chat.domain.interfaces.llm import LLMProvider
+from chat.domain.interfaces.llm import TextCompletionProvider
 from chat.domain.interfaces.memory import MemoryProvider
+from chat.domain.error_codes import ChatErrorCode
 from chat.domain.repositories import SessionRepository, MessageRepository, HotContextRepository, ModelRepository, ProviderRepository
 from chat.domain.repositories.model_repo import ModelRequestInfo
 from chat.application.agents import AgentResolver, AgentSpec, SubAgentRepository
 from chat.application.events import ErrorEvent, StepFinishEvent, StreamEvent
 from chat.application.chat_context_assembler import ChatContextAssembler
 from chat.application.chat_turn_finalizer import SessionTurnFinalizer
+from chat.application.llm_provider_resolver import LLMProviderResolver
 from chat.application.tools.skill_tools.utils.skill_matcher import SkillMatcher
 from chat.application.tools.core import ToolRegistry
 from chat.application.orchestration import AgentStepRunner, OrchestrationContext, RawMaterials, StrategyFactory
@@ -23,6 +27,16 @@ from chat.application.runtime.agent_provider import SessionAgentProvider, SubAge
 from chat.application.runtime.context_provider import SessionContextProvider, SubAgentContextProvider
 from chat.application.runtime.model_resolver import SessionModelResolver, InheritedModelResolver
 from chat.application.runtime.tool_scope_provider import ToolScopeProvider
+
+
+def _merge_runtime_options(defaults: dict, overrides: dict) -> dict:
+    result = dict(defaults or {})
+    for key, value in (overrides or {}).items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _merge_runtime_options(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 class AgentTurnRuntime:
@@ -41,6 +55,7 @@ class AgentTurnRuntime:
         tool_scope_provider: ToolScopeProvider,
         assembler: ChatContextAssembler,
         strategy_factory: StrategyFactory,
+        llm_resolver: LLMProviderResolver,
         finalizer,
         subagent_spawner: Optional["SubAgentSpawner"] = None,
     ) -> None:
@@ -50,6 +65,7 @@ class AgentTurnRuntime:
         self._tool_scope_provider = tool_scope_provider
         self._assembler = assembler
         self._strategy_factory = strategy_factory
+        self._llm_resolver = llm_resolver
         self._finalizer = finalizer
         self._subagent_spawner = subagent_spawner
 
@@ -77,6 +93,16 @@ class AgentTurnRuntime:
         model, prompt_budget_tokens = await self._model_resolver.resolve(
             user_id=user_id, model_id=model_id, provider_id=provider_id, model_policy=spec.model_policy,
         )
+
+        # runtime_options 校验：按 provider manifest 合并默认值并 jsonschema 校验
+        manifest = self._llm_resolver.runtime_options_manifest(model.provider_type)
+        runtime_options = _merge_runtime_options(manifest.get("defaults") or {}, model.runtime_options or {})
+        try:
+            Draft202012Validator.check_schema(manifest["json_schema"])
+            Draft202012Validator(manifest["json_schema"]).validate(runtime_options)
+        except (SchemaError, ValidationError) as exc:
+            raise ServiceException(ChatErrorCode.MODEL_RUNTIME_OPTIONS_INVALID, custom_msg=str(exc))
+        model = model.with_runtime_options(runtime_options)
 
         # context → 取记忆原料（子任务轮为隔离上下文）
         session_context = await self._context_provider.load(
@@ -151,17 +177,20 @@ class SubAgentSpawner:
         self,
         *,
         step_runner: AgentStepRunner,
-        llm: LLMProvider,
+        text_provider: TextCompletionProvider,
+        resolver: LLMProviderResolver,
         assembler: ChatContextAssembler,
         tool_scope_provider: ToolScopeProvider,
         subagent_repo: SubAgentRepository,
         finalizer: SessionTurnFinalizer,
+        llm_resolver: LLMProviderResolver,
     ) -> None:
         self._assembler = assembler
         self._tool_scope_provider = tool_scope_provider
         self._subagent_repo = subagent_repo
         self._finalizer = finalizer  # subagent 复用同一个 finalizer（background_tasks=None → inline 计费）
-        self._react_factory = StrategyFactory(step_runner, llm)
+        self._llm_resolver = llm_resolver
+        self._react_factory = StrategyFactory(step_runner, text_provider, resolver)
 
     async def create(self, *, session_id: str, parent_spec: AgentSpec, role: str) -> str:
         """造一个收窄的 subagent spec 落 Redis，返回 subagent_id"""
@@ -189,6 +218,7 @@ class SubAgentSpawner:
             tool_scope_provider=self._tool_scope_provider,
             assembler=self._assembler,
             strategy_factory=self._react_factory,
+            llm_resolver=self._llm_resolver,
             finalizer=self._finalizer,
             subagent_spawner=None,
         )
@@ -203,7 +233,8 @@ class SubAgentSpawner:
 
 def build_session_runtime(
     *,
-    llm: LLMProvider,
+    llm_resolver: LLMProviderResolver,
+    text_provider: TextCompletionProvider,
     memory: MemoryProvider,
     model_repo: ModelRepository,
     provider_repo: ProviderRepository,
@@ -217,19 +248,19 @@ def build_session_runtime(
     token_counter: TokenCounter,
     agent_resolver: AgentResolver | None = None,
 ) -> AgentTurnRuntime:
-    """装配会话根轮：Session* 三件 + 共享服务 + subagent_spawner（供 subagent 工具调用）"""
+    """装配会话根轮：Session* 三件 + 共享服务（resolver 多 provider）+ subagent_spawner（供 subagent 工具调用）"""
     assembler = ChatContextAssembler()
     tool_scope_provider = ToolScopeProvider(skill_matcher, tool_registry)
-    step_runner = AgentStepRunner(llm, token_counter)
+    step_runner = AgentStepRunner(llm_resolver, token_counter)
     finalizer = SessionTurnFinalizer(
-        llm=llm, memory=memory,
+        llm=text_provider, memory=memory,
         message_repo=message_repo, session_repo=session_repo, hot_context_repo=hot_context_repo,
         provider_repo=provider_repo, kafka_producer=kafka_producer,
     )
     spawner = SubAgentSpawner(
-        step_runner=step_runner, llm=llm, assembler=assembler,
+        step_runner=step_runner, text_provider=text_provider, resolver=llm_resolver, assembler=assembler,
         tool_scope_provider=tool_scope_provider, subagent_repo=subagent_repo,
-        finalizer=finalizer,  # subagent 复用同一个 finalizer
+        finalizer=finalizer, llm_resolver=llm_resolver,  # subagent 复用同一个 finalizer
     )
     return AgentTurnRuntime(
         agent_provider=SessionAgentProvider(agent_resolver, session_repo),
@@ -237,7 +268,8 @@ def build_session_runtime(
         context_provider=SessionContextProvider(memory, message_repo, session_repo, hot_context_repo),
         tool_scope_provider=tool_scope_provider,
         assembler=assembler,
-        strategy_factory=StrategyFactory(step_runner, llm),
+        strategy_factory=StrategyFactory(step_runner, text_provider, llm_resolver),
+        llm_resolver=llm_resolver,
         finalizer=finalizer,
         subagent_spawner=spawner,
     )
