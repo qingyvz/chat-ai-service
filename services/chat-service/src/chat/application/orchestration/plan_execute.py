@@ -8,15 +8,19 @@ from chat.domain.interfaces.llm import TextCompletionProvider
 from common.logger import warn
 from chat.application.events import (
     PlanCreatedEvent,
+    PlanStepStatusEvent,
     StepFinishEvent,
     StepStartEvent,
     StreamEvent,
     TextDeltaEvent,
     TextEndEvent,
     TextStartEvent,
+    ToolInputAvailableEvent,
 )
 from chat.application.orchestration.base import OrchestrationContext, OrchestrationStrategy
 from chat.application.orchestration.step_runner import PlanExecuteStepRunner
+
+_COMPLETE_STEP_TOOL = "complete_plan_step"
 
 _PLANNER_DIRECTIVE = (
     "Break the request in <user_query> into an ordered list of concrete, self-contained subtasks "
@@ -51,6 +55,7 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
         # 1. Planner：一次 LLM 调用产出整张 to-do list（结构化 JSON）
         plan = await self._plan(ctx)
         yield PlanCreatedEvent(plan_id=plan.plan_id, steps=self._steps_payload(plan))
+        steps_by_id = {step.step_id: step for step in plan.steps}
 
         # 2. 把计划注入上下文，复用 ReAct 内核让 model 按 list 自驱（工具/subagent 调用交给 model 决定）
         messages = ctx.assembler.assemble_prompt(
@@ -77,6 +82,9 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
             ):
                 if isinstance(item, StepFinishEvent):
                     step_finish_event = item
+                # 拦 model 的进度上报：complete_plan_step → 翻译成领域 PlanStepStatusEvent（事件翻译留在编排层）
+                elif isinstance(item, ToolInputAvailableEvent) and item.tool_name == _COMPLETE_STEP_TOOL:
+                    yield self._step_completed_event(steps_by_id, item.input)
                 yield item
 
             assert step_finish_event is not None
@@ -136,9 +144,21 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
         return (
             "You have produced the following plan. Execute the steps in order to fulfill the user's request.\n"
             f"Plan:\n{todo}\n"
+            "After finishing each step, call complete_plan_step(step_id, summary) to report progress. "
             "You MAY use create_subagent/call_subagent to run a step in isolation if it helps, but it is optional. "
             "When all steps are done, produce the final answer in the user's language."
         )
+
+    @staticmethod
+    def _step_completed_event(steps_by_id: Dict[str, PlanStep], tool_input: Dict[str, str]) -> PlanStepStatusEvent:
+        """据 model 上报的 complete_plan_step 入参产出步状态事件，并回写计划内的步状态"""
+        step_id = (tool_input.get("step_id") or "").strip()
+        summary = tool_input.get("summary")
+        step = steps_by_id.get(step_id)
+        if step is not None:
+            step.status = "completed"
+            step.result_summary = summary
+        return PlanStepStatusEvent(step_id=step_id, status="completed", result_summary=summary)
 
     @staticmethod
     def _steps_payload(plan: Plan) -> List[Dict[str, str]]:

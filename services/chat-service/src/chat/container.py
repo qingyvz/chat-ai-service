@@ -36,6 +36,7 @@ from chat.application.tools.skill_tools import LoadSkillTool
 from chat.application.tools.core import ToolRegistry
 from chat.application.tools.session_tools.get_historical_chat_messages_tool import GetHistoricalChatMessagesTool
 from chat.application.tools.subagent_tools import CreateSubAgentTool, CallSubAgentTool
+from chat.application.tools.plan_tools import CompletePlanStepTool
 from chat.core.config.nacos import nacos_client_manager
 from chat.service_client import FileStorageClient, AIAssetClient, ResourceClient
 from common.cloud.service_discovery import ServiceDiscovery
@@ -154,6 +155,8 @@ class Container(containers.DeclarativeContainer):
     # subagent 工具（无状态；机制由 runtime 注入 tool_context 的 subagent_spawner 承载）
     create_subagent_tool = providers.Singleton(CreateSubAgentTool)
     call_subagent_tool = providers.Singleton(CallSubAgentTool)
+    # Plan-Execute 进度上报工具（无状态；编排拦其调用发 PlanStepStatusEvent）
+    complete_plan_step_tool = providers.Singleton(CompletePlanStepTool)
 
     tool_providers = providers.List(
         search_history_tool,
@@ -161,6 +164,7 @@ class Container(containers.DeclarativeContainer):
         load_skill_asset_tool,
         create_subagent_tool,
         call_subagent_tool,
+        complete_plan_step_tool,
     )
 
     tool_registry = providers.Singleton(
