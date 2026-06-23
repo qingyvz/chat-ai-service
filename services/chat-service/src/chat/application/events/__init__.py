@@ -11,6 +11,11 @@ from chat.application.events.tool import (
     ToolInputStartEvent,
     ToolOutputAvailableEvent,
 )
+from chat.application.events.plan import (
+    PlanCreatedEvent,
+    PlanStepStatusEvent,
+    PlanUpdatedEvent,
+)
 
 __all__ = [
     "StreamEvent",
@@ -26,4 +31,7 @@ __all__ = [
     "ToolInputStartEvent",
     "ToolInputAvailableEvent",
     "ToolOutputAvailableEvent",
+    "PlanCreatedEvent",
+    "PlanStepStatusEvent",
+    "PlanUpdatedEvent",
 ]

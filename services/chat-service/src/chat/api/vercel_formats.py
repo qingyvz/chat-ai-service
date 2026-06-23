@@ -89,6 +89,21 @@ def step_finish() -> str:
 
 
 # =============================================================================
+# 计划 
+# =============================================================================
+
+def data_plan(plan_id: str, steps: list) -> str:
+    return _sse({"type": "data-plan", "id": plan_id, "data": {"steps": steps}})
+
+
+def data_plan_step(step_id: str, status: str, result_summary: Union[str, None] = None) -> str:
+    data: Dict = {"status": status}
+    if result_summary is not None:
+        data["result_summary"] = result_summary
+    return _sse({"type": "data-plan-step", "id": step_id, "data": data})
+
+
+# =============================================================================
 # 来源引用
 # =============================================================================
 

@@ -17,6 +17,15 @@ class ModelType(IntEnum):
     UNKNOWN_MODEL = 3
 
 
+class ModelFamily(str, Enum):
+    """模型协议族，决定走哪个原生 adapter"""
+    QWEN = "QWEN"
+    GPT = "GPT"
+    CLAUDE = "CLAUDE"
+    GEMINI = "GEMINI"
+    GENERIC = "GENERIC"
+
+
 class Model(Document):
     """
     模型配置，前端可见的模型元信息
@@ -28,6 +37,7 @@ class Model(Document):
     owner_user_id: Optional[str] = Field(default=None, description="USER 作用域下的归属用户 ID")
 
     type: ModelType = Field(default=ModelType.CUSTOM_MODEL, description="模型展示分组类型")
+    model_family: ModelFamily = Field(default=ModelFamily.GENERIC, description="模型协议族，决定走哪个原生 adapter")
 
     billing_ratio: int = Field(default=1, description="计费倍率")
 

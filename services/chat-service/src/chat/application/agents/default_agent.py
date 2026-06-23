@@ -1,5 +1,5 @@
-from chat.application.agents.models import (
-    Agent,
+from chat.application.agents.agent_info import (
+    AgentInfo,
     AgentMemoryPolicy,
     AgentModelPolicy,
     AgentSpec, AgentToolAndSkillPolicy,
@@ -24,8 +24,8 @@ DEFAULT_SYSTEM_PROMPT = """
         """
 
 
-def build_default_agent() -> Agent:
-    return Agent(
+def build_default_agent() -> AgentInfo:
+    return AgentInfo(
         agent_id=DEFAULT_AGENT_ID,
         name="Default Chat Agent",
         description="Default assistant behavior.",

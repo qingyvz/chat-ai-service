@@ -1,17 +1,18 @@
 from chat.application.agents.default_agent import DEFAULT_AGENT_ID, build_default_agent
-from chat.application.agents.models import (
-    Agent,
+from chat.application.agents.agent_info import (
+    AgentInfo,
     AgentMemoryPolicy,
     AgentModelPolicy,
     AgentToolAndSkillPolicy,
     AgentSpec,
 )
 from chat.application.agents.resolver import AgentResolver, CompositeAgentResolver, DefaultAgentResolver
+from chat.application.agents.subagent_repo import SubAgentRepository
 
 __all__ = [
     "DEFAULT_AGENT_ID",
     "build_default_agent",
-    "Agent",
+    "AgentInfo",
     "AgentMemoryPolicy",
     "AgentModelPolicy",
     "AgentToolAndSkillPolicy",
@@ -19,4 +20,5 @@ __all__ = [
     "AgentResolver",
     "CompositeAgentResolver",
     "DefaultAgentResolver",
+    "SubAgentRepository",
 ]

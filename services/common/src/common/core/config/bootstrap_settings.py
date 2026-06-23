@@ -46,8 +46,8 @@ class BootstrapSettings(BaseSettings):
 
     @property
     def NACOS_DATA_ID(self) -> str:
-        """Nacos config data-id"""
-        return f"{self.SERVICE_NAME}-{self.PROFILE}.yaml"
+        """Nacos config data-id（约定无扩展名，与 Nacos 上 {service}-{profile} 的 dataId 一致）"""
+        return f"{self.SERVICE_NAME}-{self.PROFILE}"
 
     @property
     def IS_DEV(self) -> bool:
