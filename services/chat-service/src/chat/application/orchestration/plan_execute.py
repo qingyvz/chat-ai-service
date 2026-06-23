@@ -1,11 +1,10 @@
 import json
 import uuid
-from typing import AsyncIterator, Dict, List
+from typing import AsyncIterator, List
 
 from chat.core.config.app_settings import settings
 from chat.domain.entities import ChatMessage, Role, Plan, PlanStep
 from chat.domain.interfaces.llm import TextCompletionProvider
-from common.logger import warn
 from chat.application.events import (
     PlanCreatedEvent,
     PlanStepStatusEvent,
@@ -18,21 +17,23 @@ from chat.application.events import (
     ToolInputAvailableEvent,
 )
 from chat.application.orchestration.base import OrchestrationContext, OrchestrationStrategy
+from chat.application.orchestration.plan_session import PlanSession
+from chat.application.orchestration.step_executor import StepExecutor
 from chat.application.orchestration.step_runner import PlanExecuteStepRunner
 
-_COMPLETE_STEP_TOOL = "complete_plan_step"
+_PLAN_TOOL_NAMES = ("execute_step", "update_plan", "abandon_step")
 
 _PLANNER_DIRECTIVE = (
-    "Break the request in <user_query> into an ordered list of concrete, self-contained subtasks "
-    "for step-by-step execution.\n"
+    "Break the request in <user_query> into a DAG of concrete, self-contained subtasks.\n"
     "Output STRICT JSON only — no prose, no code fence:\n"
-    '{"steps":[{"title":"短标题","description":"可独立执行的子任务说明"}]}\n'
-    "Keep the steps minimal; each description must be executable in isolation."
+    '{"steps":[{"id":"s1","title":"短标题","description":"可独立执行的子任务说明","depends_on":[]}]}\n'
+    "Assign each step a short unique id; reference prerequisite ids in depends_on. "
+    "Steps with no shared dependency may run in parallel. Keep the steps minimal."
 )
 
 
 class PlanAndExecuteStrategy(OrchestrationStrategy):
-    """Plan-and-Execute（v1 线性）：Planner 产 to-do list 注入上下文 → 复用 ReAct 内核让 model 按 list 自驱执行（是否调 subagent 由 model 决定，不在编排里硬编码）"""
+    """Plan-and-Execute（DAG，工具驱动 + 重规划自动机）：策略只强制首轮出 plan，之后 model 用 execute_step/update_plan/abandon_step 自驱；并行来自一轮同发多个 execute_step。"""
 
     def __init__(self, step_runner: PlanExecuteStepRunner, text_provider: TextCompletionProvider) -> None:
         self._step_runner = step_runner
@@ -40,7 +41,6 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
 
     async def run(self, ctx: OrchestrationContext) -> AsyncIterator[StreamEvent]:
         rm = ctx.raw_materials
-        # 记账下放：策略自己 seed 本轮 user 记录消息
         ctx.record_messages.append(ChatMessage(
             session_id=ctx.session_id,
             role=Role.USER,
@@ -52,12 +52,23 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
             },
         ))
 
-        # 1. Planner：一次 LLM 调用产出整张 to-do list（结构化 JSON）
-        plan = await self._plan(ctx)
-        yield PlanCreatedEvent(plan_id=plan.plan_id, steps=self._steps_payload(plan))
-        steps_by_id = {step.step_id: step for step in plan.steps}
+        max_iterations = ctx.agent_info.spec.agent_max_iterations or settings.AGENT_MAX_ITERATIONS
 
-        # 2. 把计划注入上下文，复用 ReAct 内核让 model 按 list 自驱（工具/subagent 调用交给 model 决定）
+        # 1. 强制首轮出 DAG plan，建 PlanSession + 隔离 executor，绑进 tool_scope
+        plan = await self._plan(ctx)
+        session = PlanSession(plan, settings.PLAN_EXECUTE_MAX_REPLAN_ATTEMPTS, settings.PLAN_EXECUTE_MAX_PARALLEL)
+        session.executor = StepExecutor(
+            step_runner=self._step_runner,
+            assembler=ctx.assembler,
+            model=ctx.model,
+            session_id=ctx.session_id,
+            inner_tool_scope=ctx.tool_scope.without(*_PLAN_TOOL_NAMES),
+            max_iterations=max_iterations,
+        )
+        exec_scope = ctx.tool_scope.bind("plan_session", session)
+        yield PlanCreatedEvent(plan_id=plan.plan_id, steps=session.steps_payload())
+
+        # 2. 注入执行指令
         messages = ctx.assembler.assemble_prompt(
             session_id=ctx.session_id,
             user_query=rm.user_query,
@@ -68,39 +79,59 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
             frontend_states=rm.frontend_states,
             available_skills=rm.available_skills or None,
         )
-        messages.append(ChatMessage(session_id=ctx.session_id, role=Role.USER, content=self._execution_directive(plan)))
+        messages.append(ChatMessage(session_id=ctx.session_id, role=Role.USER, content=self._dag_directive(plan)))
 
-        max_iterations = ctx.agent_info.spec.agent_max_iterations or settings.AGENT_MAX_ITERATIONS
-        for iteration in range(max_iterations):
-            step_finish_event = None
+        # 3. 自动机外层循环：透传事件 + 拦 in_progress + drain plan 事件 + 失败重规划
+        final_message = None
+        synth_prompted = False
+        for turn in range(max_iterations):
+            for failed_id, error in session.take_replans():
+                messages.append(ChatMessage(session_id=ctx.session_id, role=Role.USER, content=self._replan_directive(failed_id, error)))
+
+            step_finish = None
             async for item in self._step_runner.run(
                 messages=messages,
                 session_id=ctx.session_id,
                 model_request=ctx.model,
-                iteration=iteration,
-                tool_scope=ctx.tool_scope,
+                iteration=turn,
+                tool_scope=exec_scope,
             ):
                 if isinstance(item, StepFinishEvent):
-                    step_finish_event = item
-                # 拦 model 的进度上报：complete_plan_step → 翻译成领域 PlanStepStatusEvent（事件翻译留在编排层）
-                elif isinstance(item, ToolInputAvailableEvent) and item.tool_name == _COMPLETE_STEP_TOOL:
-                    yield self._step_completed_event(steps_by_id, item.input)
+                    step_finish = item
+                elif isinstance(item, ToolInputAvailableEvent) and item.tool_name == "execute_step":
+                    step_id = (item.input or {}).get("step_id")
+                    step = session.get_step(step_id) if step_id else None
+                    if step is not None and session.is_ready(step):
+                        yield PlanStepStatusEvent(step_id=step_id, status="in_progress")
                 yield item
 
-            assert step_finish_event is not None
-            ctx.usage_tokens += step_finish_event.token_usage
-            if step_finish_event.is_finished:
-                ctx.record_messages.append(step_finish_event.final_assistant_message)
-                return
-            else:
-                ctx.record_messages.extend(step_finish_event.intermediate_messages)
-                messages.extend(step_finish_event.intermediate_messages)
-        else:
-            async for event in self._emit_exhausted_warning(ctx.session_id):
+            # tools 推的 completed/failed/updated 事件
+            for event in session.drain_events():
                 yield event
 
+            assert step_finish is not None
+            ctx.usage_tokens += step_finish.token_usage
+            if step_finish.is_finished:
+                final_message = step_finish.final_assistant_message
+                break
+            messages.extend(step_finish.intermediate_messages)
+            ctx.record_messages.extend(step_finish.intermediate_messages)
+
+            # 所有步已处理（含被弃）但 model 未收尾 → 提示产出最终答案
+            if session.all_done() and not synth_prompted:
+                messages.append(ChatMessage(session_id=ctx.session_id, role=Role.USER, content=self._synth_directive()))
+                synth_prompted = True
+
+        ctx.usage_tokens += session.step_tokens
+        if final_message is not None:
+            ctx.record_messages.append(final_message)
+            return
+        # 兜底：循环耗尽仍未收尾 → 据已完成结果产出部分答案
+        async for event in self._forced_finalize(ctx, session):
+            yield event
+
     async def _plan(self, ctx: OrchestrationContext) -> Plan:
-        """Planner 用全量上下文，追加规划指令，单次调用产出结构化计划"""
+        """Planner 用全量上下文，追加规划指令，单次调用产出结构化 DAG 计划"""
         rm = ctx.raw_materials
         messages = ctx.assembler.assemble_prompt(
             session_id=ctx.session_id,
@@ -125,48 +156,53 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
         content = result.raw.choices[0].message.content or ""
         return Plan(plan_id=f"plan_{uuid.uuid4().hex}", steps=self._parse_plan_steps(content, fallback_query=rm.user_query))
 
-    async def _emit_exhausted_warning(self, session_id: str) -> AsyncIterator[StreamEvent]:
-        """执行循环超出最大迭代次数时的兜底文本输出"""
-        warning_text = f"Plan-and-Execute 推理超出最大迭代次数{settings.AGENT_MAX_ITERATIONS}，未能生成最终答案"
-        warn("plan-execute loop exhausted.", session_id=session_id)
+    async def _forced_finalize(self, ctx: OrchestrationContext, session: PlanSession) -> AsyncIterator[StreamEvent]:
+        """循环耗尽兜底：据已完成步结果拼一个部分答案，避免无终答"""
+        completed = [s for s in session.plan.steps if s.status == "completed"]
+        if completed:
+            body = "\n\n".join([f"[{s.title}]\n{s.result_summary or ''}" for s in completed])
+            text = f"已完成部分子任务，结果如下：\n\n{body}"
+        else:
+            text = f"Plan-and-Execute 超出最大迭代次数{settings.AGENT_MAX_ITERATIONS}，未能完成任务。"
         text_id = f"txt_{uuid.uuid4().hex}"
         yield StepStartEvent()
         yield TextStartEvent(text_id=text_id)
-        yield TextDeltaEvent(text_id=text_id, delta=warning_text)
+        yield TextDeltaEvent(text_id=text_id, delta=text)
         yield TextEndEvent(text_id=text_id)
-        final_message = ChatMessage(session_id=session_id, role=Role.ASSISTANT, content=warning_text)
+        final_message = ChatMessage(session_id=ctx.session_id, role=Role.ASSISTANT, content=text)
+        ctx.record_messages.append(final_message)
         yield StepFinishEvent(is_finished=True, final_assistant_message=final_message, token_usage=0)
 
     @staticmethod
-    def _execution_directive(plan: Plan) -> str:
-        """把 to-do list 渲染成执行指令注入上下文"""
-        todo = "\n".join([f"{i + 1}. [{s.step_id}] {s.title}: {s.description}" for i, s in enumerate(plan.steps)])
+    def _dag_directive(plan: Plan) -> str:
+        lines = [f"- {s.step_id} (depends_on: {s.depends_on or '无'}): {s.title} — {s.description}" for s in plan.steps]
         return (
-            "You have produced the following plan. Execute the steps in order to fulfill the user's request.\n"
-            f"Plan:\n{todo}\n"
-            "After finishing each step, call complete_plan_step(step_id, summary) to report progress. "
-            "You MAY use create_subagent/call_subagent to run a step in isolation if it helps, but it is optional. "
-            "When all steps are done, produce the final answer in the user's language."
+            "You have produced the following plan (DAG). Drive it to completion:\n"
+            + "\n".join(lines)
+            + "\n\nCall execute_step(step_id) for steps whose dependencies are all completed; "
+            "issue several execute_step calls in ONE turn for independent ready steps to run them in parallel. "
+            "If a step fails, use update_plan to revise/fix it, or abandon_step if it is truly unfixable. "
+            "When all reachable steps are done, write the final answer for the user."
         )
 
     @staticmethod
-    def _step_completed_event(steps_by_id: Dict[str, PlanStep], tool_input: Dict[str, str]) -> PlanStepStatusEvent:
-        """据 model 上报的 complete_plan_step 入参产出步状态事件，并回写计划内的步状态"""
-        step_id = (tool_input.get("step_id") or "").strip()
-        summary = tool_input.get("summary")
-        step = steps_by_id.get(step_id)
-        if step is not None:
-            step.status = "completed"
-            step.result_summary = summary
-        return PlanStepStatusEvent(step_id=step_id, status="completed", result_summary=summary)
+    def _replan_directive(step_id: str, error: str) -> str:
+        return (
+            f"Step {step_id} failed: {error}\n"
+            "Revise the plan with update_plan to fix it (e.g. split or change approach), then re-run the affected steps. "
+            "If it cannot be fixed, call abandon_step to skip it and continue with the rest."
+        )
 
     @staticmethod
-    def _steps_payload(plan: Plan) -> List[Dict[str, str]]:
-        return [{"id": step.step_id, "title": step.title, "status": step.status} for step in plan.steps]
+    def _synth_directive() -> str:
+        return (
+            "All reachable steps are now completed or abandoned. "
+            "Write the final answer for the user from the completed results, noting any parts that could not be done."
+        )
 
     @staticmethod
     def _parse_plan_steps(content: str, fallback_query: str) -> List[PlanStep]:
-        """解析 Planner 的 JSON 输出；失败则兜底为覆盖原始请求的单步计划"""
+        """解析 Planner 的 JSON 输出（含 id / depends_on）；失败则兜底为覆盖原始请求的单步计划"""
         text = content.strip()
         if text.startswith("```"):
             text = text.strip("`")
@@ -178,16 +214,26 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
             raw_steps = []
 
         steps: List[PlanStep] = []
+        seen: set[str] = set()
         for index, raw in enumerate(raw_steps):
             title = (raw.get("title") or "").strip()
             if not title:
                 continue
+            step_id = (raw.get("id") or "").strip() or f"step_{index + 1}_{uuid.uuid4().hex[:6]}"
+            while step_id in seen:
+                step_id = f"{step_id}_{uuid.uuid4().hex[:4]}"
+            seen.add(step_id)
             steps.append(PlanStep(
-                step_id=f"step_{index + 1}_{uuid.uuid4().hex[:6]}",
+                step_id=step_id,
                 title=title,
                 description=(raw.get("description") or "").strip(),
+                depends_on=[str(d).strip() for d in (raw.get("depends_on") or []) if str(d).strip()],
             ))
 
         if not steps:
             steps.append(PlanStep(step_id=f"step_1_{uuid.uuid4().hex[:6]}", title="执行任务", description=fallback_query))
+        # 丢弃指向不存在步的依赖，避免永远 not-ready
+        valid_ids = {s.step_id for s in steps}
+        for step in steps:
+            step.depends_on = [d for d in step.depends_on if d in valid_ids and d != step.step_id]
         return steps

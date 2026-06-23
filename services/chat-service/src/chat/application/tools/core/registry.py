@@ -22,6 +22,15 @@ class ToolScope:
     def context(self) -> dict[str, Any]:
         return dict(self._context)
 
+    def bind(self, key: str, value: Any) -> "ToolScope":
+        """派生工具集相同、context 追加 (key,value) 的新 scope（策略在 run 内注入 plan_session）"""
+        return ToolScope(tools=self._tools, context={**self._context, key: value})
+
+    def without(self, *names: str) -> "ToolScope":
+        """派生去掉指定工具的新 scope（内层 executor 用，防止递归调用编排工具）"""
+        remaining = {name: tool for name, tool in self._tools.items() if name not in names}
+        return ToolScope(tools=remaining, context=self._context)
+
     def __len__(self) -> int:
         return len(self._tools)
 

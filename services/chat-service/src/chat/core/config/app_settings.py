@@ -82,6 +82,12 @@ class AppSettings(BaseModel):
     # 工具返回内容的字符截断上限（约 ~1000 token），防止超长结果撑爆后续迭代的上下文水位
     TOOL_RESULT_MAX_CHARS: int = 4000
 
+    # Plan-and-Execute DAG
+    # 一轮内并行执行的子任务上限（execute_step 经 Semaphore 限流）
+    PLAN_EXECUTE_MAX_PARALLEL: int = 4
+    # 单个 step 失败后允许的重规划次数上限，超限自动弃步
+    PLAN_EXECUTE_MAX_REPLAN_ATTEMPTS: int = 2
+
     # Skill 配置
 
     # 默认召回数量
