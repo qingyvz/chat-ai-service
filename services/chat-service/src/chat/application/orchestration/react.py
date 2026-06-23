@@ -13,13 +13,13 @@ from chat.application.events import (
     TextStartEvent,
 )
 from chat.application.orchestration.base import OrchestrationContext, OrchestrationStrategy
-from chat.application.orchestration.step_runner import AgentStepRunner
+from chat.application.orchestration.step_runner import ReActStepRunner
 
 
 class ReActStrategy(OrchestrationStrategy):
     """ReAct 编排：assemble_prompt 入口组装 + for 循环逐步委派 AgentStepRunner，行为与重构前等价（回归基准）"""
 
-    def __init__(self, step_runner: AgentStepRunner) -> None:
+    def __init__(self, step_runner: ReActStepRunner) -> None:
         self._step_runner = step_runner
 
     async def run(self, ctx: OrchestrationContext) -> AsyncIterator[StreamEvent]:

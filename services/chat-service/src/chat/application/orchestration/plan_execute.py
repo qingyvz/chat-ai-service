@@ -1,22 +1,22 @@
 import json
 import uuid
-from typing import AsyncIterator, Dict, List, Tuple
+from typing import AsyncIterator, Dict, List
 
+from chat.core.config.app_settings import settings
 from chat.domain.entities import ChatMessage, Role, Plan, PlanStep
-from chat.domain.entities.message import MessageModelInfo
-from chat.domain.error_codes import ChatErrorCode
-from chat.domain.interfaces.llm import LLMEventType, TextCompletionProvider
-from chat.application.llm_provider_resolver import LLMProviderResolver
-from common.core.exceptions import ServiceException
+from chat.domain.interfaces.llm import TextCompletionProvider
+from common.logger import warn
 from chat.application.events import (
     PlanCreatedEvent,
-    PlanStepStatusEvent,
     StepFinishEvent,
     StepStartEvent,
     StreamEvent,
+    TextDeltaEvent,
+    TextEndEvent,
+    TextStartEvent,
 )
 from chat.application.orchestration.base import OrchestrationContext, OrchestrationStrategy
-from chat.application.orchestration.delta_interpreter import StepDeltaInterpreter
+from chat.application.orchestration.step_runner import PlanExecuteStepRunner
 
 _PLANNER_DIRECTIVE = (
     "Break the request in <user_query> into an ordered list of concrete, self-contained subtasks "
@@ -25,82 +25,84 @@ _PLANNER_DIRECTIVE = (
     '{"steps":[{"title":"短标题","description":"可独立执行的子任务说明"}]}\n'
     "Keep the steps minimal; each description must be executable in isolation."
 )
-_SYNTH_SYSTEM_PROMPT = (
-    "You are a synthesis agent. Given the user's original request and the results of each executed subtask, "
-    "produce one coherent final answer in the user's language. Do not mention the planning process."
-)
 
 
 class PlanAndExecuteStrategy(OrchestrationStrategy):
-    """
-    Plan-and-Execute（v1 线性单角色）：Planner 产计划 → 每步调 create_subagent/call_subagent 两个工具执行 → Synthesizer 汇总终答。
-    spawn 机制不在策略内，落在两个工具里；策略只负责"产计划 + 发 to-do 事件 + 逐步调工具"。
-    """
+    """Plan-and-Execute（v1 线性）：Planner 产 to-do list 注入上下文 → 复用 ReAct 内核让 model 按 list 自驱执行（是否调 subagent 由 model 决定，不在编排里硬编码）"""
 
-    def __init__(self, text_provider: TextCompletionProvider, resolver: LLMProviderResolver) -> None:
+    def __init__(self, step_runner: PlanExecuteStepRunner, text_provider: TextCompletionProvider) -> None:
+        self._step_runner = step_runner
         self._text_provider = text_provider
-        self._resolver = resolver
 
     async def run(self, ctx: OrchestrationContext) -> AsyncIterator[StreamEvent]:
-        raw_materials = ctx.raw_materials
-        # 记账下放：seed 本轮 user 记录消息（终答在 Synthesizer 末尾补 assistant 消息）
+        rm = ctx.raw_materials
+        # 记账下放：策略自己 seed 本轮 user 记录消息
         ctx.record_messages.append(ChatMessage(
             session_id=ctx.session_id,
             role=Role.USER,
-            content=raw_materials.user_query,
+            content=rm.user_query,
             metadata={
-                "relevant_facts": raw_materials.relevant_facts,
-                "frontend_states": raw_materials.frontend_states or {},
-                "available_skills_id": [skill.skill_id for skill in raw_materials.available_skills] or [],
+                "relevant_facts": rm.relevant_facts,
+                "frontend_states": rm.frontend_states or {},
+                "available_skills_id": [skill.skill_id for skill in rm.available_skills] or [],
             },
         ))
 
-        # 从 tool_scope 取 subagent 工具（机制在工具里，策略只调用）
-        create_subagent = ctx.tool_scope.get("create_subagent")
-        call_subagent = ctx.tool_scope.get("call_subagent")
-        tool_context = ctx.tool_scope.context
-        if create_subagent is None or call_subagent is None:
-            raise ServiceException(ChatErrorCode.SUBAGENT_TOOLS_UNAVAILABLE)
-
-        # 1. Planner：一次 LLM 调用产出整张 to-do list
+        # 1. Planner：一次 LLM 调用产出整张 to-do list（结构化 JSON）
         plan = await self._plan(ctx)
         yield PlanCreatedEvent(plan_id=plan.plan_id, steps=self._steps_payload(plan))
 
-        # 2. 逐步执行（v1 线性）：每步建一个 subagent 并调用它执行子任务
-        prior_results: List[Tuple[str, str]] = []
-        for step in plan.steps:
-            step.status = "in_progress"
-            yield PlanStepStatusEvent(step_id=step.step_id, status="in_progress")
+        # 2. 把计划注入上下文，复用 ReAct 内核让 model 按 list 自驱（工具/subagent 调用交给 model 决定）
+        messages = ctx.assembler.assemble_prompt(
+            session_id=ctx.session_id,
+            user_query=rm.user_query,
+            system_prompt=rm.system_prompt,
+            session_summary=rm.session_summary,
+            history_messages=rm.history_messages,
+            relevant_facts=rm.relevant_facts,
+            frontend_states=rm.frontend_states,
+            available_skills=rm.available_skills or None,
+        )
+        messages.append(ChatMessage(session_id=ctx.session_id, role=Role.USER, content=self._execution_directive(plan)))
 
-            subagent_id = await create_subagent.execute(tool_context, role="executor")
-            result_text = await call_subagent.execute(
-                tool_context,
-                subagent_id=subagent_id,
-                task=f"{step.title}\n{step.description}",
-                prior_results=prior_results,
-            )
+        max_iterations = ctx.agent_info.spec.agent_max_iterations or settings.AGENT_MAX_ITERATIONS
+        for iteration in range(max_iterations):
+            step_finish_event = None
+            async for item in self._step_runner.run(
+                messages=messages,
+                session_id=ctx.session_id,
+                model_request=ctx.model,
+                iteration=iteration,
+                tool_scope=ctx.tool_scope,
+            ):
+                if isinstance(item, StepFinishEvent):
+                    step_finish_event = item
+                yield item
 
-            step.status = "completed"
-            step.result_summary = result_text
-            prior_results.append((step.title, result_text))
-            yield PlanStepStatusEvent(step_id=step.step_id, status="completed", result_summary=result_text)
-
-        # 3. Synthesizer：汇总各步结果 → 终答文本（复用 text 事件）
-        async for event in self._synthesize(ctx, plan):
-            yield event
+            assert step_finish_event is not None
+            ctx.usage_tokens += step_finish_event.usage_tokens
+            if step_finish_event.is_finished:
+                ctx.record_messages.append(step_finish_event.final_assistant_message)
+                return
+            else:
+                ctx.record_messages.extend(step_finish_event.intermediate_messages)
+                messages.extend(step_finish_event.intermediate_messages)
+        else:
+            async for event in self._emit_exhausted_warning(ctx.session_id):
+                yield event
 
     async def _plan(self, ctx: OrchestrationContext) -> Plan:
         """Planner 用全量上下文，追加规划指令，单次调用产出结构化计划"""
-        raw_materials = ctx.raw_materials
+        rm = ctx.raw_materials
         messages = ctx.assembler.assemble_prompt(
             session_id=ctx.session_id,
-            user_query=raw_materials.user_query,
-            system_prompt=raw_materials.system_prompt,
-            session_summary=raw_materials.session_summary,
-            history_messages=raw_materials.history_messages,
-            relevant_facts=raw_materials.relevant_facts,
-            frontend_states=raw_materials.frontend_states,
-            available_skills=raw_materials.available_skills or None,
+            user_query=rm.user_query,
+            system_prompt=rm.system_prompt,
+            session_summary=rm.session_summary,
+            history_messages=rm.history_messages,
+            relevant_facts=rm.relevant_facts,
+            frontend_states=rm.frontend_states,
+            available_skills=rm.available_skills or None,
         )
         messages.append(ChatMessage(session_id=ctx.session_id, role=Role.USER, content=_PLANNER_DIRECTIVE))
 
@@ -113,52 +115,34 @@ class PlanAndExecuteStrategy(OrchestrationStrategy):
         )
         ctx.usage_tokens += result.usage_tokens
         content = result.raw.choices[0].message.content or ""
-        return Plan(plan_id=f"plan_{uuid.uuid4().hex}", steps=self._parse_plan_steps(content, fallback_query=raw_materials.user_query))
+        return Plan(plan_id=f"plan_{uuid.uuid4().hex}", steps=self._parse_plan_steps(content, fallback_query=rm.user_query))
 
-    async def _synthesize(self, ctx: OrchestrationContext, plan: Plan) -> AsyncIterator[StreamEvent]:
-        """汇总各步结果，流式产出终答文本"""
-        synth_messages = [
-            ChatMessage(session_id=ctx.session_id, role=Role.SYSTEM, content=_SYNTH_SYSTEM_PROMPT),
-            ChatMessage(session_id=ctx.session_id, role=Role.USER, content=self._build_synth_input(ctx.raw_materials.user_query, plan)),
-        ]
-
-        interpreter = StepDeltaInterpreter()
-
+    async def _emit_exhausted_warning(self, session_id: str) -> AsyncIterator[StreamEvent]:
+        """执行循环超出最大迭代次数时的兜底文本输出"""
+        warning_text = f"Plan-and-Execute 推理超出最大迭代次数{settings.AGENT_MAX_ITERATIONS}，未能生成最终答案"
+        warn("plan-execute loop exhausted.", session_id=session_id)
+        text_id = f"txt_{uuid.uuid4().hex}"
         yield StepStartEvent()
-        usage_tokens = 0
-        llm_provider = self._resolver.resolve(ctx.model)
-        async for provider_event in llm_provider.stream_chat_completion(
-            messages=synth_messages,
-            model_request=ctx.model,
-        ):
-            if provider_event.type == LLMEventType.USAGE and provider_event.usage:
-                usage_tokens += provider_event.usage.total_tokens
-            for event in interpreter.consume(provider_event):
-                yield event
-        for event in interpreter.close():
-            yield event
+        yield TextStartEvent(text_id=text_id)
+        yield TextDeltaEvent(text_id=text_id, delta=warning_text)
+        yield TextEndEvent(text_id=text_id)
+        final_message = ChatMessage(session_id=session_id, role=Role.ASSISTANT, content=warning_text)
+        yield StepFinishEvent(is_finished=True, final_assistant_message=final_message, usage_tokens=0)
 
-        ctx.usage_tokens += usage_tokens
-        final_message = ChatMessage(
-            session_id=ctx.session_id,
-            role=Role.ASSISTANT,
-            model_id=ctx.model.model_id,
-            model_info=MessageModelInfo.from_model_request(ctx.model),
-            content=interpreter.assistant_content or "",
-            reasoning_content=interpreter.assistant_reasoning or None,
-            token_usage=usage_tokens,
+    @staticmethod
+    def _execution_directive(plan: Plan) -> str:
+        """把 to-do list 渲染成执行指令注入上下文"""
+        todo = "\n".join([f"{i + 1}. [{s.step_id}] {s.title}: {s.description}" for i, s in enumerate(plan.steps)])
+        return (
+            "You have produced the following plan. Execute the steps in order to fulfill the user's request.\n"
+            f"Plan:\n{todo}\n"
+            "You MAY use create_subagent/call_subagent to run a step in isolation if it helps, but it is optional. "
+            "When all steps are done, produce the final answer in the user's language."
         )
-        ctx.record_messages.append(final_message)
-        yield StepFinishEvent(is_finished=True, final_assistant_message=final_message, usage_tokens=usage_tokens)
 
     @staticmethod
     def _steps_payload(plan: Plan) -> List[Dict[str, str]]:
         return [{"id": step.step_id, "title": step.title, "status": step.status} for step in plan.steps]
-
-    @staticmethod
-    def _build_synth_input(user_query: str, plan: Plan) -> str:
-        results = "\n\n".join([f"[{step.title}]\n{step.result_summary or ''}" for step in plan.steps])
-        return f"<user_query>\n{user_query}\n</user_query>\n\n<subtask_results>\n{results}\n</subtask_results>"
 
     @staticmethod
     def _parse_plan_steps(content: str, fallback_query: str) -> List[PlanStep]:

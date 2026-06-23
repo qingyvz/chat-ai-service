@@ -21,7 +21,7 @@ from chat.application.chat_turn_finalizer import SessionTurnFinalizer
 from chat.application.llm_provider_resolver import LLMProviderResolver
 from chat.application.tools.skill_tools.utils.skill_matcher import SkillMatcher
 from chat.application.tools.core import ToolRegistry
-from chat.application.orchestration import AgentStepRunner, OrchestrationContext, RawMaterials, StrategyFactory
+from chat.application.orchestration import OrchestrationContext, RawMaterials, StrategyFactory
 from chat.application.token_counter import TokenCounter
 from chat.application.runtime.agent_provider import SessionAgentProvider, SubAgentProvider, build_subagent_info
 from chat.application.runtime.context_provider import SessionContextProvider, SubAgentContextProvider
@@ -176,21 +176,20 @@ class SubAgentSpawner:
     def __init__(
         self,
         *,
-        step_runner: AgentStepRunner,
+        llm_resolver: LLMProviderResolver,
+        token_counter: TokenCounter,
         text_provider: TextCompletionProvider,
-        resolver: LLMProviderResolver,
         assembler: ChatContextAssembler,
         tool_scope_provider: ToolScopeProvider,
         subagent_repo: SubAgentRepository,
         finalizer: SessionTurnFinalizer,
-        llm_resolver: LLMProviderResolver,
     ) -> None:
         self._assembler = assembler
         self._tool_scope_provider = tool_scope_provider
         self._subagent_repo = subagent_repo
         self._finalizer = finalizer  # subagent 复用同一个 finalizer（background_tasks=None → inline 计费）
         self._llm_resolver = llm_resolver
-        self._react_factory = StrategyFactory(step_runner, text_provider, resolver)
+        self._strategy_factory = StrategyFactory(llm_resolver, token_counter, text_provider)
 
     async def create(self, *, session_id: str, parent_spec: AgentSpec, role: str) -> str:
         """造一个收窄的 subagent spec 落 Redis，返回 subagent_id"""
@@ -217,7 +216,7 @@ class SubAgentSpawner:
             context_provider=SubAgentContextProvider(prior_results),
             tool_scope_provider=self._tool_scope_provider,
             assembler=self._assembler,
-            strategy_factory=self._react_factory,
+            strategy_factory=self._strategy_factory,
             llm_resolver=self._llm_resolver,
             finalizer=self._finalizer,
             subagent_spawner=None,
@@ -251,16 +250,15 @@ def build_session_runtime(
     """装配会话根轮：Session* 三件 + 共享服务（resolver 多 provider）+ subagent_spawner（供 subagent 工具调用）"""
     assembler = ChatContextAssembler()
     tool_scope_provider = ToolScopeProvider(skill_matcher, tool_registry)
-    step_runner = AgentStepRunner(llm_resolver, token_counter)
     finalizer = SessionTurnFinalizer(
         llm=text_provider, memory=memory,
         message_repo=message_repo, session_repo=session_repo, hot_context_repo=hot_context_repo,
         provider_repo=provider_repo, kafka_producer=kafka_producer,
     )
     spawner = SubAgentSpawner(
-        step_runner=step_runner, text_provider=text_provider, resolver=llm_resolver, assembler=assembler,
-        tool_scope_provider=tool_scope_provider, subagent_repo=subagent_repo,
-        finalizer=finalizer, llm_resolver=llm_resolver,  # subagent 复用同一个 finalizer
+        llm_resolver=llm_resolver, token_counter=token_counter, text_provider=text_provider,
+        assembler=assembler, tool_scope_provider=tool_scope_provider, subagent_repo=subagent_repo,
+        finalizer=finalizer,  # subagent 复用同一个 finalizer
     )
     return AgentTurnRuntime(
         agent_provider=SessionAgentProvider(agent_resolver, session_repo),
@@ -268,7 +266,7 @@ def build_session_runtime(
         context_provider=SessionContextProvider(memory, message_repo, session_repo, hot_context_repo),
         tool_scope_provider=tool_scope_provider,
         assembler=assembler,
-        strategy_factory=StrategyFactory(step_runner, text_provider, llm_resolver),
+        strategy_factory=StrategyFactory(llm_resolver, token_counter, text_provider),
         llm_resolver=llm_resolver,
         finalizer=finalizer,
         subagent_spawner=spawner,
