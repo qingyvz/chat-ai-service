@@ -64,7 +64,7 @@ class ReActStrategy(OrchestrationStrategy):
                 yield item
 
             assert step_finish_event is not None
-            ctx.usage_tokens += step_finish_event.usage_tokens
+            ctx.usage_tokens += step_finish_event.token_usage
             if step_finish_event.is_finished:
                 ctx.record_messages.append(step_finish_event.final_assistant_message)
                 return
@@ -90,4 +90,4 @@ class ReActStrategy(OrchestrationStrategy):
             role=Role.ASSISTANT,
             content=warning_text,
         )
-        yield StepFinishEvent(is_finished=True, final_assistant_message=final_message, usage_tokens=0)
+        yield StepFinishEvent(is_finished=True, final_assistant_message=final_message, token_usage=0)

@@ -18,4 +18,4 @@ class StepFinishEvent(StreamEvent):
     is_finished: bool
     intermediate_messages: List[ChatMessage] = field(default_factory=list)
     final_assistant_message: Optional[ChatMessage] = None
-    usage_tokens: int = field(default_factory=int)
+    token_usage: int = field(default_factory=int)

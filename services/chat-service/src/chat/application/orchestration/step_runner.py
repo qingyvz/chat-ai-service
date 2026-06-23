@@ -108,7 +108,7 @@ class ReActStepRunner(StepRunner):
 
         # 没有工具调用 → 结束本轮（也结束整个循环）
         if not interpreter.tool_calls:
-            yield StepFinishEvent(is_finished=True, final_assistant_message=assistant_msg, usage_tokens=token_usage)
+            yield StepFinishEvent(is_finished=True, final_assistant_message=assistant_msg, token_usage=token_usage)
             return
 
         # 有工具调用 → 进入工具阶段
@@ -147,7 +147,7 @@ class ReActStepRunner(StepRunner):
             )
 
         # 结束本轮并继续下一轮模型推理（因为调用工具）
-        yield StepFinishEvent(is_finished=False, intermediate_messages=new_messages, usage_tokens=token_usage)
+        yield StepFinishEvent(is_finished=False, intermediate_messages=new_messages, token_usage=token_usage)
 
 
 class PlanExecuteStepRunner(ReActStepRunner):
