@@ -16,9 +16,9 @@ class SkillAssetMeta(BaseModel):
     def from_response(cls, payload: Mapping[str, Any]) -> "SkillAssetMeta":
         return cls(
             id=str(payload.get("id")),
-            path=str(f"{payload.get('path')}/{payload.get("name")}"),
+            path=str(f"{payload.get('path').rstrip('/')}/{payload.get('name')}"),
             object_key=str(payload.get("objectKey")),
-            kind=str(payload.get("skillAssetResourceType")),
+            kind=str(payload.get("assetResourceType")),
             upload_status=str(payload.get("uploadStatus")),
             description=str(payload.get("description") or ""),
             size_bytes=int(payload.get("size") or 0),
@@ -29,23 +29,20 @@ class Skill(BaseModel):
     name: str = Field(default="")
     description: str = Field(default="")
     source_type: str = Field(default="")
-    skill_md_object_key: str = Field(default="")
     assets_manifest: List[SkillAssetMeta] = Field(default_factory=list)
     version: int = Field(default=0)
 
     @classmethod
     def from_response(cls, payload: Mapping[str, Any]) -> "Skill":
         latest_published_skill = payload.get("skillVersionBundle")
-        main_skill_md = latest_published_skill.get("mainSkillMD") or {}
         return cls(
             skill_id=str(payload.get("resourceId")),
             name=str(payload.get("name") or ""),
             description=str(payload.get("description") or ""),
             source_type=str(payload.get("sourceType")),
-            skill_md_object_key=str(main_skill_md.get("objectKey") or ""),
             assets_manifest=[
                 SkillAssetMeta.from_response(item)
-                for item in (latest_published_skill.get("skillAssets") or [])
+                for item in (latest_published_skill.get("assets") or [])
             ],
             version=int(payload.get("version") or 0),
         )
@@ -63,5 +60,5 @@ class SkillMeta:
             skill_id=str(payload.get("resourceId")),
             name=str(payload.get("name")),
             description=str(payload.get("description")),
-            version=int(payload.get("version")),
+            version=int(payload.get("version")  or 0),
         )

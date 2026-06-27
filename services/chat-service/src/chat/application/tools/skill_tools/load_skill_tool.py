@@ -16,6 +16,9 @@ from chat.application.tools.core import (
 )
 from chat.application.tools.skill_tools.common import AllowedSkillIdCheck, build_skill_output_placeholder, SkillPermissionCheck
 
+# 主文档 = 根目录下的 SKILL.md（对齐 ai-asset SkillVersionBundleEntity 的 ROOT_PATH + MAIN_SKILL_MD 判定）
+_MAIN_SKILL_MD_PATH = "/SKILL.md"
+
 
 class LoadSkillTool:
     """
@@ -101,7 +104,8 @@ class LoadSkillTool:
         return "\n".join(lines)
 
     async def _load_skill_md(self, skill:Skill) -> str:
-        if not skill.skill_md_object_key:
+        main_md = next((a for a in skill.assets_manifest if a.path == _MAIN_SKILL_MD_PATH), None)
+        if main_md is None or not main_md.object_key:
             raise ToolExecutionError(
                 reason="Skill.md Not Available",
                 detail_reason=f"Failed to find Skill.md of corrupted skill '{skill.skill_id}'.",
@@ -109,13 +113,13 @@ class LoadSkillTool:
             )
 
         try:
-            raw = await self._file_loader.load_by_object_key(skill.skill_md_object_key)
+            raw = await self._file_loader.load_by_object_key(main_md.object_key)
         except Exception as e:
             raise ToolExecutionError(
                 reason="Skill.md Load Failed",
                 detail_reason=f"Failed to load asset: {type(e).__name__}",
                 retryable=True,
-                metadata={"skill_id": skill.skill_id, "object_key": skill.skill_md_object_key, "detail": str(e)},
+                metadata={"skill_id": skill.skill_id, "object_key": main_md.object_key, "detail": str(e)},
             )
 
         try:
