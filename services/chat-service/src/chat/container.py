@@ -162,6 +162,7 @@ class Container(containers.DeclarativeContainer):
         CreateFileTool,
         plan_repo=plan_repo,
         resource_client=resource_client,
+        file_storage_client=file_storage_client,
         kafka_producer=kafka_producer,
     )
     update_plan_tool = providers.Singleton(

@@ -5,6 +5,7 @@ from common.logger import warn
 from chat.domain.entities import Plan, PlanStep
 from chat.domain.repositories import PlanRepository
 from chat.service_client.resource_service_client import ResourceClient
+from chat.service_client.file_storage_service_client import FileStorageClient
 from chat.application.events import PlanCreatedEvent
 from chat.application.orchestration.plan_context import publish_plan_content
 from chat.application.tools.core import (
@@ -41,9 +42,10 @@ _PARAMS: Dict[str, Any] = {
 class CreateFileTool:
     """创建 PlanMode 计划文件：注册 resource + 持久化 + 发 Kafka，待用户审查"""
 
-    def __init__(self, plan_repo: PlanRepository, resource_client: ResourceClient, kafka_producer: Any) -> None:
+    def __init__(self, plan_repo: PlanRepository, resource_client: ResourceClient, file_storage_client: FileStorageClient, kafka_producer: Any) -> None:
         self._plan_repo = plan_repo
         self._resource_client = resource_client
+        self._file_storage_client = file_storage_client
         self._kafka_producer = kafka_producer
         self._definition = ToolDefinition(
             llm_spec=ToolLLMSpec(
@@ -85,21 +87,30 @@ class CreateFileTool:
             for i, s in enumerate(raw_steps) if (s.get("title") or "").strip()
         ]
 
-        resource_id = None
-        try:
-            resource_id = await self._resource_client.create_resource_item(resource_name=file_name, owner_id=str(user_id))
-        except Exception as e:
-            warn("plan resource register failed.", session_id=session_id, detail=str(e))
-
         plan = Plan(
             plan_id=f"plan_{uuid.uuid4().hex}",
             session_id=str(session_id),
             user_id=str(user_id),
-            resource_id=resource_id,
             file_name=file_name,
             content=content,
             steps=steps,
         )
+        markdown = plan.render_markdown()
+
+        # 直传 file-storage(OSS)，file-storage 发 file-uploaded 通知 ai-asset
+        try:
+            plan.object_key = await self._file_storage_client.upload_content(markdown, extension="md")
+        except Exception as e:
+            warn("plan content upload failed.", session_id=session_id, detail=str(e))
+
+        # 注册为 resource（带字节大小）
+        try:
+            plan.resource_id = await self._resource_client.create_resource_item(
+                resource_name=file_name, owner_id=str(user_id), size=len(markdown.encode("utf-8")),
+            )
+        except Exception as e:
+            warn("plan resource register failed.", session_id=session_id, detail=str(e))
+
         plan.content_hash = plan.compute_hash()
         await self._plan_repo.create(plan)
 

@@ -26,6 +26,7 @@ class Plan(Document):
     session_id: str
     user_id: str
     resource_id: Optional[str] = None
+    object_key: Optional[str] = None
     file_name: str = ""
     status: PlanStatus = "awaiting_review"
     content: str = ""
