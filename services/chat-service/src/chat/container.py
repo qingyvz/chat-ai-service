@@ -200,6 +200,7 @@ class Container(containers.DeclarativeContainer):
         kafka_producer=kafka_producer,
         skill_matcher=skill_matcher,
         subagent_repo=subagent_repo,
+        plan_repo=plan_repo,
         token_counter=token_counter,
         agent_resolver=agent_resolver,
     )

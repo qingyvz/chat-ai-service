@@ -12,7 +12,7 @@ from common.kafka.producer import KafkaProducerClient
 from chat.domain.interfaces.llm import TextCompletionProvider
 from chat.domain.interfaces.memory import MemoryProvider
 from chat.domain.error_codes import ChatErrorCode
-from chat.domain.repositories import SessionRepository, MessageRepository, HotContextRepository, ModelRepository, ProviderRepository
+from chat.domain.repositories import SessionRepository, MessageRepository, HotContextRepository, ModelRepository, ProviderRepository, PlanRepository
 from chat.domain.repositories.model_repo import ModelRequestInfo
 from chat.application.agents import AgentResolver, AgentSpec, SubAgentRepository
 from chat.application.events import ErrorEvent, StepFinishEvent, StreamEvent
@@ -83,6 +83,8 @@ class AgentTurnRuntime:
         user_defined_on_demand_skill_ids: Optional[Set[str]] = None,
         user_defined_force_enabled_skill_ids: Optional[Set[str]] = None,
         think_type_override: Optional[str] = None,
+        plan_action: Optional[str] = None,
+        plan_feedback: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> AsyncIterator[StreamEvent]:
         # agent → 取 spec
@@ -143,6 +145,8 @@ class AgentTurnRuntime:
             ),
             assembler=self._assembler,
             tool_scope=tool_scope,
+            plan_action=plan_action,
+            plan_feedback=plan_feedback,
         )
 
         # 由 think_type 选策略并跑循环；override 优先于 agent spec；runtime 只透传事件 + 事后交 finalizer
@@ -183,13 +187,14 @@ class SubAgentSpawner:
         tool_scope_provider: ToolScopeProvider,
         subagent_repo: SubAgentRepository,
         finalizer: SessionTurnFinalizer,
+        plan_repo: PlanRepository,
     ) -> None:
         self._assembler = assembler
         self._tool_scope_provider = tool_scope_provider
         self._subagent_repo = subagent_repo
         self._finalizer = finalizer  # subagent 复用同一个 finalizer（background_tasks=None → inline 计费）
         self._llm_resolver = llm_resolver
-        self._strategy_factory = StrategyFactory(llm_resolver, token_counter, text_provider)
+        self._strategy_factory = StrategyFactory(llm_resolver, token_counter, text_provider, plan_repo)
 
     async def create(self, *, session_id: str, parent_spec: AgentSpec, role: str) -> str:
         """造一个收窄的 subagent spec 落 Redis，返回 subagent_id"""
@@ -244,6 +249,7 @@ def build_session_runtime(
     kafka_producer: KafkaProducerClient,
     skill_matcher: SkillMatcher,
     subagent_repo: SubAgentRepository,
+    plan_repo: PlanRepository,
     token_counter: TokenCounter,
     agent_resolver: AgentResolver | None = None,
 ) -> AgentTurnRuntime:
@@ -259,6 +265,7 @@ def build_session_runtime(
         llm_resolver=llm_resolver, token_counter=token_counter, text_provider=text_provider,
         assembler=assembler, tool_scope_provider=tool_scope_provider, subagent_repo=subagent_repo,
         finalizer=finalizer,  # subagent 复用同一个 finalizer
+        plan_repo=plan_repo,
     )
     return AgentTurnRuntime(
         agent_provider=SessionAgentProvider(agent_resolver, session_repo),
@@ -266,7 +273,7 @@ def build_session_runtime(
         context_provider=SessionContextProvider(memory, message_repo, session_repo, hot_context_repo),
         tool_scope_provider=tool_scope_provider,
         assembler=assembler,
-        strategy_factory=StrategyFactory(llm_resolver, token_counter, text_provider),
+        strategy_factory=StrategyFactory(llm_resolver, token_counter, text_provider, plan_repo),
         llm_resolver=llm_resolver,
         finalizer=finalizer,
         subagent_spawner=spawner,

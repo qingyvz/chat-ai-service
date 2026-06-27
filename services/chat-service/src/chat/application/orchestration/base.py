@@ -35,10 +35,12 @@ class OrchestrationContext:
     tool_scope: ToolScope
     record_messages: List[ChatMessage] = field(default_factory=list)
     usage_tokens: int = 0
+    plan_action: Optional[str] = None       # PlanMode：execute / change
+    plan_feedback: Optional[str] = None      # PlanMode change 时的修改建议
 
 
 class OrchestrationStrategy(ABC):
-    """编排策略抽象：由 think_type 选具体实现（ReAct / Plan-and-Execute），产出领域 StreamEvent"""
+    """编排策略抽象：由 think_type 选具体实现（ReAct / PlanMode），产出领域 StreamEvent"""
 
     @abstractmethod
     def run(self, ctx: OrchestrationContext) -> AsyncIterator[StreamEvent]:
