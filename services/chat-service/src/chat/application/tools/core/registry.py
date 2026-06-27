@@ -23,7 +23,7 @@ class ToolScope:
         return dict(self._context)
 
     def bind(self, key: str, value: Any) -> "ToolScope":
-        """派生工具集相同、context 追加 (key,value) 的新 scope（策略在 run 内注入 plan_session）"""
+        """派生工具集相同、context 追加 (key,value) 的新 scope（策略在 run 内向工具注入运行时状态）"""
         return ToolScope(tools=self._tools, context={**self._context, key: value})
 
     def without(self, *names: str) -> "ToolScope":

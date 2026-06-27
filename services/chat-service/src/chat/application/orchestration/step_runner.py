@@ -148,8 +148,3 @@ class ReActStepRunner(StepRunner):
 
         # 结束本轮并继续下一轮模型推理（因为调用工具）
         yield StepFinishEvent(is_finished=False, intermediate_messages=new_messages, token_usage=token_usage)
-
-
-class PlanExecuteStepRunner(ReActStepRunner):
-    """Plan-Execute 步语义：v1 与 ReAct 等价（plan 注入上下文后让 model 自驱）；DAG 并行调度留待 v2 override"""
-    pass
