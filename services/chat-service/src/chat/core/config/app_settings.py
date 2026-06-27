@@ -41,7 +41,6 @@ class AppSettings(BaseModel):
     # Kafka 配置
     KAFKA_BOOTSTRAP_SERVERS: str
     KAFKA_TOKEN_CONSUMPTION_TOPIC: str = "user-token-consumption-topic"
-    KAFKA_PLAN_CONTENT_TOPIC: str = "plan-content-topic"
 
     # Redis / MongoDB / Qdrant 配置
     REDIS_URL: str

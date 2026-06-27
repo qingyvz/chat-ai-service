@@ -12,8 +12,10 @@ from common.kafka.producer import KafkaProducerClient
 from chat.domain.interfaces.llm import TextCompletionProvider
 from chat.domain.interfaces.memory import MemoryProvider
 from chat.domain.error_codes import ChatErrorCode
-from chat.domain.repositories import SessionRepository, MessageRepository, HotContextRepository, ModelRepository, ProviderRepository, PlanRepository
+from chat.domain.repositories import SessionRepository, MessageRepository, HotContextRepository, ModelRepository, ProviderRepository
 from chat.domain.repositories.model_repo import ModelRequestInfo
+from chat.core.persistence import RedisPlanCache
+from chat.service_client import AIAssetClient
 from chat.application.agents import AgentResolver, AgentSpec, SubAgentRepository
 from chat.application.events import ErrorEvent, StepFinishEvent, StreamEvent
 from chat.application.chat_context_assembler import ChatContextAssembler
@@ -187,14 +189,15 @@ class SubAgentSpawner:
         tool_scope_provider: ToolScopeProvider,
         subagent_repo: SubAgentRepository,
         finalizer: SessionTurnFinalizer,
-        plan_repo: PlanRepository,
+        ai_asset_client: AIAssetClient,
+        plan_cache: RedisPlanCache,
     ) -> None:
         self._assembler = assembler
         self._tool_scope_provider = tool_scope_provider
         self._subagent_repo = subagent_repo
         self._finalizer = finalizer  # subagent 复用同一个 finalizer（background_tasks=None → inline 计费）
         self._llm_resolver = llm_resolver
-        self._strategy_factory = StrategyFactory(llm_resolver, token_counter, text_provider, plan_repo)
+        self._strategy_factory = StrategyFactory(llm_resolver, token_counter, text_provider, ai_asset_client, plan_cache)
 
     async def create(self, *, session_id: str, parent_spec: AgentSpec, role: str) -> str:
         """造一个收窄的 subagent spec 落 Redis，返回 subagent_id"""
@@ -249,7 +252,8 @@ def build_session_runtime(
     kafka_producer: KafkaProducerClient,
     skill_matcher: SkillMatcher,
     subagent_repo: SubAgentRepository,
-    plan_repo: PlanRepository,
+    ai_asset_client: AIAssetClient,
+    plan_cache: RedisPlanCache,
     token_counter: TokenCounter,
     agent_resolver: AgentResolver | None = None,
 ) -> AgentTurnRuntime:
@@ -265,7 +269,8 @@ def build_session_runtime(
         llm_resolver=llm_resolver, token_counter=token_counter, text_provider=text_provider,
         assembler=assembler, tool_scope_provider=tool_scope_provider, subagent_repo=subagent_repo,
         finalizer=finalizer,  # subagent 复用同一个 finalizer
-        plan_repo=plan_repo,
+        ai_asset_client=ai_asset_client,
+        plan_cache=plan_cache,
     )
     return AgentTurnRuntime(
         agent_provider=SessionAgentProvider(agent_resolver, session_repo),
@@ -273,7 +278,7 @@ def build_session_runtime(
         context_provider=SessionContextProvider(memory, message_repo, session_repo, hot_context_repo),
         tool_scope_provider=tool_scope_provider,
         assembler=assembler,
-        strategy_factory=StrategyFactory(llm_resolver, token_counter, text_provider, plan_repo),
+        strategy_factory=StrategyFactory(llm_resolver, token_counter, text_provider, ai_asset_client, plan_cache),
         llm_resolver=llm_resolver,
         finalizer=finalizer,
         subagent_spawner=spawner,

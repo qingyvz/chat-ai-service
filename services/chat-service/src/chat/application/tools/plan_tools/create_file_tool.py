@@ -1,13 +1,11 @@
 import uuid
 from typing import Any, Dict, List
 
-from common.logger import warn
+from common.core.exceptions import RpcError
 from chat.domain.entities import Plan, PlanStep
-from chat.domain.repositories import PlanRepository
-from chat.service_client.resource_service_client import ResourceClient
-from chat.service_client.file_storage_service_client import FileStorageClient
+from chat.core.persistence import RedisPlanCache
+from chat.service_client import AIAssetClient
 from chat.application.events import PlanCreatedEvent
-from chat.application.orchestration.plan_context import publish_plan_content
 from chat.application.tools.core import (
     ToolDefinition,
     ToolExecutionError,
@@ -40,13 +38,11 @@ _PARAMS: Dict[str, Any] = {
 
 
 class CreateFileTool:
-    """创建 PlanMode 计划文件：注册 resource + 持久化 + 发 Kafka，待用户审查"""
+    """创建 PlanMode 计划文件：经 ai-asset 注册资产（直传 OSS + resource）+ 热缓存，待用户审查"""
 
-    def __init__(self, plan_repo: PlanRepository, resource_client: ResourceClient, file_storage_client: FileStorageClient, kafka_producer: Any) -> None:
-        self._plan_repo = plan_repo
-        self._resource_client = resource_client
-        self._file_storage_client = file_storage_client
-        self._kafka_producer = kafka_producer
+    def __init__(self, ai_asset_client: AIAssetClient, plan_cache: RedisPlanCache) -> None:
+        self._ai_asset_client = ai_asset_client
+        self._plan_cache = plan_cache
         self._definition = ToolDefinition(
             llm_spec=ToolLLMSpec(
                 name="create_file",
@@ -95,29 +91,19 @@ class CreateFileTool:
             content=content,
             steps=steps,
         )
-        markdown = plan.render_markdown()
 
-        # 直传 file-storage(OSS)，file-storage 发 file-uploaded 通知 ai-asset
         try:
-            plan.object_key = await self._file_storage_client.upload_content(markdown, extension="md")
-        except Exception as e:
-            warn("plan content upload failed.", session_id=session_id, detail=str(e))
-
-        # 注册为 resource（带字节大小）
-        try:
-            plan.resource_id = await self._resource_client.create_resource_item(
-                resource_name=file_name, owner_id=str(user_id), size=len(markdown.encode("utf-8")),
+            resp = await self._ai_asset_client.create_plan(
+                session_id=str(session_id), owner_id=str(user_id), title=file_name,
+                content=plan.render_markdown(), steps=plan.steps_payload(),
             )
-        except Exception as e:
-            warn("plan resource register failed.", session_id=session_id, detail=str(e))
+        except RpcError as e:
+            raise ToolExecutionError(reason="Plan Register Failed", detail_reason=f"计划资产注册失败：{e}")
 
+        plan.resource_id = resp.get("resourceId")
+        plan.object_key = resp.get("objectKey")
         plan.content_hash = plan.compute_hash()
-        await self._plan_repo.create(plan)
-
-        try:
-            await publish_plan_content(self._kafka_producer, plan)
-        except Exception as e:
-            warn("plan content publish failed.", session_id=session_id, detail=str(e))
+        await self._plan_cache.save(plan.session_id, plan)
 
         plan_context.plan = plan
         plan_context.emit(PlanCreatedEvent(plan_id=plan.plan_id, steps=plan.steps_payload()))

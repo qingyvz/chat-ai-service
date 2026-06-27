@@ -21,9 +21,9 @@ from chat.core.persistence import (
     MongoMessageRepository,
     MongoModelRepository,
     MongoProviderRepository,
-    MongoPlanRepository,
     RedisHotContext,
     RedisSubAgentRepository,
+    RedisPlanCache,
 )
 from chat.application.runtime import build_session_runtime
 from chat.application.token_counter import TokenCounter
@@ -80,9 +80,9 @@ class Container(containers.DeclarativeContainer):
     message_repo = providers.Singleton(MongoMessageRepository)
     model_repo = providers.Singleton(MongoModelRepository)
     provider_repo = providers.Singleton(MongoProviderRepository)
-    plan_repo = providers.Singleton(MongoPlanRepository)
     hot_context_repo = providers.Singleton(RedisHotContext)
     subagent_repo = providers.Singleton(RedisSubAgentRepository)
+    plan_cache = providers.Singleton(RedisPlanCache)
 
     # 内部 RPC：Nacos 服务发现 + 通用 httpx 客户端 + file-storage typed facade
     service_discovery = providers.Singleton(
@@ -160,15 +160,13 @@ class Container(containers.DeclarativeContainer):
     # PlanMode 工具（机制由策略经 tool_context 注入的 plan_context 承载）
     create_file_tool = providers.Singleton(
         CreateFileTool,
-        plan_repo=plan_repo,
-        resource_client=resource_client,
-        file_storage_client=file_storage_client,
-        kafka_producer=kafka_producer,
+        ai_asset_client=ai_asset_client,
+        plan_cache=plan_cache,
     )
     update_plan_tool = providers.Singleton(
         UpdatePlanTool,
-        plan_repo=plan_repo,
-        kafka_producer=kafka_producer,
+        ai_asset_client=ai_asset_client,
+        plan_cache=plan_cache,
     )
 
     tool_providers = providers.List(
@@ -201,7 +199,8 @@ class Container(containers.DeclarativeContainer):
         kafka_producer=kafka_producer,
         skill_matcher=skill_matcher,
         subagent_repo=subagent_repo,
-        plan_repo=plan_repo,
+        ai_asset_client=ai_asset_client,
+        plan_cache=plan_cache,
         token_counter=token_counter,
         agent_resolver=agent_resolver,
     )
