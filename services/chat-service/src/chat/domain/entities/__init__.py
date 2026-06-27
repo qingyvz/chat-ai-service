@@ -4,7 +4,7 @@ from .session import ChatSession
 from .model import ModelType, ModelScope, Model, ModelProviderMapping
 from .provider import Provider, ProviderScope, ProviderType
 from .skill import Skill, SkillMeta, SkillAssetMeta
-from .plan import Plan, PlanStep, PlanStepStatus
+from .plan import Plan, PlanStep, PlanStepStatus, PlanStatus
 
 __all__ = [
     "ChatMessage", "Role",
@@ -15,5 +15,5 @@ __all__ = [
     "Skill",
     "SkillMeta",
     "SkillAssetMeta",
-    "Plan", "PlanStep", "PlanStepStatus",
+    "Plan", "PlanStep", "PlanStepStatus", "PlanStatus",
 ]

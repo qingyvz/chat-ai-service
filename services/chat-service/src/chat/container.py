@@ -21,6 +21,7 @@ from chat.core.persistence import (
     MongoMessageRepository,
     MongoModelRepository,
     MongoProviderRepository,
+    MongoPlanRepository,
     RedisHotContext,
     RedisSubAgentRepository,
 )
@@ -36,6 +37,7 @@ from chat.application.tools.skill_tools import LoadSkillTool
 from chat.application.tools.core import ToolRegistry
 from chat.application.tools.session_tools.get_historical_chat_messages_tool import GetHistoricalChatMessagesTool
 from chat.application.tools.subagent_tools import CreateSubAgentTool, CallSubAgentTool
+from chat.application.tools.plan_tools import CreateFileTool, UpdatePlanTool
 from chat.core.config.nacos import nacos_client_manager
 from chat.service_client import FileStorageClient, AIAssetClient, ResourceClient
 from common.cloud.service_discovery import ServiceDiscovery
@@ -78,6 +80,7 @@ class Container(containers.DeclarativeContainer):
     message_repo = providers.Singleton(MongoMessageRepository)
     model_repo = providers.Singleton(MongoModelRepository)
     provider_repo = providers.Singleton(MongoProviderRepository)
+    plan_repo = providers.Singleton(MongoPlanRepository)
     hot_context_repo = providers.Singleton(RedisHotContext)
     subagent_repo = providers.Singleton(RedisSubAgentRepository)
 
@@ -154,6 +157,18 @@ class Container(containers.DeclarativeContainer):
     # subagent 工具（无状态；机制由 runtime 注入 tool_context 的 subagent_spawner 承载）
     create_subagent_tool = providers.Singleton(CreateSubAgentTool)
     call_subagent_tool = providers.Singleton(CallSubAgentTool)
+    # PlanMode 工具（机制由策略经 tool_context 注入的 plan_context 承载）
+    create_file_tool = providers.Singleton(
+        CreateFileTool,
+        plan_repo=plan_repo,
+        resource_client=resource_client,
+        kafka_producer=kafka_producer,
+    )
+    update_plan_tool = providers.Singleton(
+        UpdatePlanTool,
+        plan_repo=plan_repo,
+        kafka_producer=kafka_producer,
+    )
 
     tool_providers = providers.List(
         search_history_tool,
@@ -161,6 +176,8 @@ class Container(containers.DeclarativeContainer):
         load_skill_asset_tool,
         create_subagent_tool,
         call_subagent_tool,
+        create_file_tool,
+        update_plan_tool,
     )
 
     tool_registry = providers.Singleton(

@@ -9,6 +9,7 @@ from common.http.rpc_client import RpcClient
 
 _DEFAULT_SERVICE_NAME = "resource-service"
 _CHECK_RES_PERMISSION_PATH = "/internal/resource/checkResPermission"
+_ADD_RES_PATH = "/internal/resource/addRes"
 
 
 class ResourceClient:
@@ -43,6 +44,32 @@ class ResourceClient:
         if not isinstance(data, dict):
             raise RpcError(
                 service_name=self._service_name, path=_CHECK_RES_PERMISSION_PATH,
+                msg=f"unexpected data payload: {data!r}",
+            )
+        return data
+
+    async def create_resource_item(
+        self,
+        *,
+        resource_name: str,
+        owner_id: str,
+        resource_type: str = "plan",
+        path_tag_id: Optional[str] = None,
+        preview: Optional[str] = None,
+        size: Optional[int] = None,
+    ) -> str:
+        """内部注册资源（/internal/resource/addRes），返回 resourceId"""
+        body: dict = {"resourceName": resource_name, "resourceType": resource_type, "ownerId": owner_id}
+        if path_tag_id is not None:
+            body["pathTagId"] = path_tag_id
+        if preview is not None:
+            body["preview"] = preview
+        if size is not None:
+            body["size"] = size
+        data = await self._rpc.post(self._service_name, _ADD_RES_PATH, json=body)
+        if not isinstance(data, str) or not data:
+            raise RpcError(
+                service_name=self._service_name, path=_ADD_RES_PATH,
                 msg=f"unexpected data payload: {data!r}",
             )
         return data
