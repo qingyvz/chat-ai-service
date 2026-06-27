@@ -30,7 +30,7 @@ class ModelRequestInfo:
 
     @property
     def base_url(self) -> Optional[str]:
-        return self.provider.api_base_url
+        return self.provider.base_url
 
     @property
     def provider_type(self) -> ProviderType:
@@ -46,10 +46,6 @@ class ModelRequestInfo:
     @property
     def model_name(self) -> str:
         return self.mapping.provider_model_name
-
-    @property
-    def api_base_url(self) -> str:
-        return self.provider.api_base_url
 
     @property
     def api_key(self) -> str:
@@ -74,10 +70,6 @@ class ModelRequestInfo:
     @property
     def support_tools(self) -> bool:
         return self.model.support_tools
-
-    @property
-    def support_streaming(self) -> bool:
-        return self.model.support_streaming
 
     @property
     def context_window_tokens(self) -> Optional[int]:

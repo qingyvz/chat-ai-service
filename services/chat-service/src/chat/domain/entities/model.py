@@ -18,7 +18,6 @@ class ModelType(IntEnum):
 
 
 class ModelFamily(str, Enum):
-    """模型协议族，决定走哪个原生 adapter"""
     QWEN = "QWEN"
     GPT = "GPT"
     CLAUDE = "CLAUDE"
@@ -31,20 +30,18 @@ class Model(Document):
     模型配置，前端可见的模型元信息
     """
     display_name: str = Field(..., description="展示名称（如 GPT-4o）")
-    vendor: str = Field(..., description="模型厂商（如 OpenAI、Google、DeepSeek）")
 
     scope: ModelScope = Field(default=ModelScope.SYSTEM, description="模型作用域")
     owner_user_id: Optional[str] = Field(default=None, description="USER 作用域下的归属用户 ID")
 
     type: ModelType = Field(default=ModelType.CUSTOM_MODEL, description="模型展示分组类型")
-    model_family: ModelFamily = Field(default=ModelFamily.GENERIC, description="模型协议族，决定走哪个原生 adapter")
+    model_family: ModelFamily = Field(default=ModelFamily.GENERIC, description="模型协议族")
 
     billing_ratio: int = Field(default=1, description="计费倍率")
 
     support_thinking: bool = Field(default=False, description="是否支持深度思考")
     support_vision: bool = Field(default=False, description="是否支持视觉输入")
     support_tools: bool = Field(default=True, description="是否支持 tool calling")
-    support_streaming: bool = Field(default=True, description="是否支持流式输出")
 
     context_window_tokens: Optional[int] = Field(default=None, description="上下文窗口 token 上限")
     max_output_tokens: Optional[int] = Field(default=None, description="最大输出 token 数")

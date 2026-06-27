@@ -108,10 +108,12 @@ class MongoModelRepository(ModelRepository):
 
         if "display_name" in updates:
             model.display_name = updates["display_name"]
-        if "vendor" in updates:
-            model.vendor = updates["vendor"]
         if "type" in updates:
             model.type = updates["type"]
+        if "model_family" in updates:
+            model.model_family = updates["model_family"]
+        if "runtime_options" in updates:
+            model.runtime_options = updates["runtime_options"]
         if "billing_ratio" in updates:
             model.billing_ratio = updates["billing_ratio"]
         if "support_thinking" in updates:
@@ -120,8 +122,6 @@ class MongoModelRepository(ModelRepository):
             model.support_vision = updates["support_vision"]
         if "support_tools" in updates:
             model.support_tools = updates["support_tools"]
-        if "support_streaming" in updates:
-            model.support_streaming = updates["support_streaming"]
         if "context_window_tokens" in updates:
             model.context_window_tokens = updates["context_window_tokens"]
         if "max_output_tokens" in updates:
@@ -165,7 +165,7 @@ class MongoModelRepository(ModelRepository):
         is_preferred: bool = True,
         is_active: bool = True,
     ) -> ModelProviderMapping:
-        await self.get_model(model_id, user_id)
+        model = await self.get_model(model_id, user_id)
 
         provider = await Provider.find_one(
             Provider.id == provider_id,
@@ -174,9 +174,6 @@ class MongoModelRepository(ModelRepository):
         )
         if provider is None:
             raise ServiceException(ChatErrorCode.PROVIDER_NOT_FOUND)
-
-        if provider.type != ProviderType.OPENAI_COMPATIBLE_LLM:
-            raise ServiceException(ChatErrorCode.MODEL_PROVIDER_TYPE_UNSUPPORTED)
 
         mapping = await ModelProviderMapping.find_one(
             ModelProviderMapping.model_id == model_id,
@@ -288,11 +285,14 @@ class MongoModelRepository(ModelRepository):
         user_id: Optional[str] = None,
         provider_id: Optional[PydanticObjectId] = None,
         scope: Optional[ModelScope] = None,
+        runtime_options: Optional[dict[str, Any]] = None
     ) -> ModelRequestInfo:
+        runtime_options = runtime_options or {}
         model = await self._find_chat_model(model_id, user_id, scope)
         if model is None:
             raise ServiceException(ChatErrorCode.MODEL_NOT_FOUND)
 
+        mapping: ModelProviderMapping | None = None
         if provider_id is not None:
             mapping = await ModelProviderMapping.find_one(
                 ModelProviderMapping.model_id == model.id,
@@ -321,7 +321,7 @@ class MongoModelRepository(ModelRepository):
         if provider is None:
             raise ServiceException(ChatErrorCode.PROVIDER_NOT_FOUND)
 
-        return ModelRequestInfo(model=model, mapping=mapping, provider=provider)
+        return ModelRequestInfo(model=model, mapping=mapping, provider=provider, runtime_options=runtime_options)
 
     async def _find_chat_model(
         self,

@@ -35,13 +35,13 @@ def to_provider_response(provider: Provider) -> ProviderResponse:
     return ProviderResponse(
         id=str(provider.id) if provider.id else "",
         name=provider.name,
-        api_base_url=provider.api_base_url,
+        base_url=provider.base_url,
         api_key_fingerprint=provider.api_key_fingerprint,
         scope=provider.scope,
         type=provider.type,
         is_active=provider.is_active,
-        usage_tokens=provider.usage_tokens,
-        billable_usage_tokens=provider.billable_usage_tokens,
+        token_usage=provider.token_usage,
+        billable_token_usage=provider.billable_token_usage,
     )
 
 
@@ -68,13 +68,11 @@ def to_model_response(
         id=str(model.id) if model.id else "",
         scope=model.scope,
         display_name=model.display_name,
-        vendor=model.vendor,
         type=model.type,
         billing_ratio=model.billing_ratio,
         support_thinking=model.support_thinking,
         support_vision=model.support_vision,
         support_tools=model.support_tools,
-        support_streaming=model.support_streaming,
         context_window_tokens=model.context_window_tokens,
         max_output_tokens=model.max_output_tokens,
         is_active=model.is_active,
@@ -146,7 +144,7 @@ async def create_user_provider(
     await provider_repo.create_provider(
         Provider(
             name=req.name,
-            api_base_url=req.api_base_url,
+            base_url=req.base_url,
             api_key=req.api_key,
             type=req.type,
         )
@@ -222,13 +220,11 @@ async def create_user_model(
     await model_repo.create_model(
         Model(
             display_name=req.display_name,
-            vendor=req.vendor,
             type=req.type,
             billing_ratio=req.billing_ratio,
             support_thinking=req.support_thinking,
             support_vision=req.support_vision,
             support_tools=req.support_tools,
-            support_streaming=req.support_streaming,
             context_window_tokens=req.context_window_tokens,
             max_output_tokens=req.max_output_tokens,
         )

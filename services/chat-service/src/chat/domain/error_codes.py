@@ -21,6 +21,7 @@ class ChatErrorCode(IErrorCode):
     MODEL_MAPPING_ALREADY_EXISTS = (40024, "模型供应商映射已存在")
     MODEL_SCOPE_MISMATCH = (40025, "模型、供应商或映射作用域不一致")
     MODEL_PROVIDER_TYPE_UNSUPPORTED = (40026, "供应商类型不支持该模型")
+    MODEL_RUNTIME_OPTIONS_INVALID = (40027, "模型运行时参数不合法")
 
     # --- 模型相关 ---
     LLM_GENERATION_FAILED = (50011, "大模型生成失败")

@@ -51,7 +51,6 @@ class MongoProviderRepository(ProviderRepository):
 
         provider.scope = self._scope_for(user_id)
         provider.owner_user_id = user_id
-        provider.is_active = True
         provider.api_key_fingerprint = self._mask_api_key(provider.api_key)
         provider.created_at = provider.created_at or now
         provider.updated_at = now
@@ -73,8 +72,8 @@ class MongoProviderRepository(ProviderRepository):
 
         if "name" in updates:
             provider.name = updates["name"]
-        if "api_base_url" in updates:
-            provider.api_base_url = updates["api_base_url"]
+        if "base_url" in updates:
+            provider.base_url = updates["base_url"]
         if "api_key" in updates:
             provider.api_key = updates["api_key"]
             provider.api_key_fingerprint = self._mask_api_key(updates["api_key"])
@@ -114,10 +113,10 @@ class MongoProviderRepository(ProviderRepository):
         self,
         provider_id: PydanticObjectId,
         user_id: Optional[str],
-        usage_tokens: int,
-        billable_usage_tokens: int = 0,
+        token_usage: int,
+        billable_token_usage: int = 0,
     ) -> None:
-        if usage_tokens <= 0 and billable_usage_tokens <= 0:
+        if token_usage <= 0 and billable_token_usage <= 0:
             return
 
         result = await Provider.get_pymongo_collection().update_one(
@@ -128,8 +127,8 @@ class MongoProviderRepository(ProviderRepository):
             },
             {
                 "$inc": {
-                    "usage_tokens": max(usage_tokens, 0),
-                    "billable_usage_tokens": max(billable_usage_tokens, 0),
+                    "token_usage": max(token_usage, 0),
+                    "billable_token_usage": max(billable_token_usage, 0),
                 },
                 "$set": {"updated_at": datetime.now(timezone.utc)},
             },
