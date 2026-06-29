@@ -45,19 +45,16 @@ async def create_session(
 @router.get("/getActivePlan", response_model=R[Optional[TodoListResponse]], status_code=200)
 @inject
 async def get_active_plan(
-        sessionId: str = Query(..., description="会话 ID"),
         user_id: str = Depends(require_login),
-        session_repo: SessionRepository = Depends(Provide[Container.session_repo]),
         ai_asset_client: AIAssetClient = Depends(Provide[Container.ai_asset_client]),
         plan_cache: RedisPlanCache = Depends(Provide[Container.plan_cache]),
 ):
-    """取会话当前活跃计划：先读 Redis 热缓存，未命中回源 ai-asset，供前端刷新后重建 PlanPanel"""
-    await session_repo.get_session_for_user(sessionId, user_id)
-    plan = await plan_cache.get(sessionId)
+    """取当前用户的活跃计划（owner 维度、不绑会话）：先读 Redis 热缓存，未命中回源 ai-asset，供前端刷新后重建 PlanPanel"""
+    plan = await plan_cache.get(user_id)
     if plan is None:
-        plan = await ai_asset_client.get_active_plan(sessionId, user_id)
+        plan = await ai_asset_client.get_active_plan(user_id)
         if plan is not None:
-            await plan_cache.save(sessionId, plan)
+            await plan_cache.save(user_id, plan)
     if plan is None:
         return R.success(data=None)
     return R.success(data=TodoListResponse(

@@ -11,8 +11,10 @@ _DEFAULT_SERVICE_NAME = "ai-asset-service"
 _GET_SKILL_PATH = "/internal/skill/getSkillByResourceId"
 _LIST_PUBLISHED_SKILLS_META_PATH = "/internal/skill/listPublishedSkillsMetaByResourceIds"
 _CREATE_PLAN_PATH = "/internal/plan/create"
-_GET_ACTIVE_PLAN_PATH = "/internal/plan/getActive"
+_LIST_PLANS_BY_OWNER_PATH = "/internal/plan/listByOwner"
 _UPDATE_PLAN_PATH = "/internal/plan/update"
+
+_ACTIVE_PLAN_STATUSES = ("awaiting_review", "executing")
 
 
 class AIAssetClient:
@@ -57,19 +59,18 @@ class AIAssetClient:
     async def create_plan(
         self,
         *,
-        session_id: str,
         owner_id: str,
         title: str,
         content: str,
         steps: List[dict],
         description: str = "",
     ) -> dict:
-        """注册计划文件资产（ai-asset 内部直传 OSS + 注册 resource + 落 Mongo），返回 PlanInfoResponse"""
+        """注册计划文件资产（owner 维度、不绑会话；ai-asset 落 Mongo 单档），返回 PlanInfoResponse"""
         data = await self._rpc.post(
             self._service_name,
             _CREATE_PLAN_PATH,
             json={
-                "sessionId": session_id, "ownerId": owner_id, "title": title,
+                "ownerId": owner_id, "title": title,
                 "name": title, "description": description, "content": content, "steps": steps,
             },
         )
@@ -80,14 +81,15 @@ class AIAssetClient:
             )
         return data
 
-    async def get_active_plan(self, session_id: str, user_id: str) -> Optional[Plan]:
-        """取会话当前未完成的计划（冷读回源，热路径走 Redis 缓存）"""
+    async def get_active_plan(self, owner_id: str) -> Optional[Plan]:
+        """取该用户最近一个未完成的计划：listByOwner 按 updateTime 倒序，筛活跃态取首个（冷读回源，热路径走 Redis）"""
         data = await self._rpc.get(
-            self._service_name, _GET_ACTIVE_PLAN_PATH, params={"sessionId": session_id},
+            self._service_name, _LIST_PLANS_BY_OWNER_PATH, params={"ownerId": owner_id},
         )
-        if not data:
-            return None
-        return self._plan_from_response(data, user_id)
+        for item in (data or []):
+            if (item.get("status") or "").lower() in _ACTIVE_PLAN_STATUSES:
+                return self._plan_from_response(item, owner_id)
+        return None
 
     async def update_plan(
         self,
@@ -108,18 +110,19 @@ class AIAssetClient:
         await self._rpc.post(self._service_name, _UPDATE_PLAN_PATH, json=body)
 
     @staticmethod
-    def _plan_from_response(data: dict, user_id: str) -> Plan:
+    def _plan_from_response(data: dict, owner_id: str) -> Plan:
         steps = [
             PlanStep(
-                step_id=s.get("id") or "", title=s.get("title") or "", status=s.get("status") or "pending",
+                step_id=s.get("id") or "", title=s.get("title") or "",
+                status=(s.get("status") or "pending").lower(),
             )
             for s in (data.get("steps") or [])
         ]
         resource_id = data.get("resourceId")
         return Plan(
-            plan_id=resource_id, session_id=data.get("sessionId") or "", user_id=user_id,
+            plan_id=resource_id, user_id=owner_id,
             resource_id=resource_id, object_key=data.get("objectKey"),
-            file_name=data.get("name") or "", status=data.get("status") or "awaiting_review",
+            file_name=data.get("name") or "", status=(data.get("status") or "awaiting_review").lower(),
             content=data.get("content") or "", steps=steps, version=data.get("version") or 1,
         )
 

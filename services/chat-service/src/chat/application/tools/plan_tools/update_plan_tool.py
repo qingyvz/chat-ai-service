@@ -86,8 +86,8 @@ class UpdatePlanTool:
                     steps=plan.steps_payload(),
                 )
             except RpcError as e:
-                warn("plan update persist failed.", session_id=plan.session_id, detail=str(e))
-        await self._plan_cache.save(plan.session_id, plan)
+                warn("plan update persist failed.", resource_id=plan.resource_id, detail=str(e))
+        await self._plan_cache.save(plan.user_id, plan)
 
         if step_event is not None:
             plan_context.emit(step_event)

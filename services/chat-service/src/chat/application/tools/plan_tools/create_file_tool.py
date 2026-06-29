@@ -56,7 +56,7 @@ class CreateFileTool:
             policy=ToolPolicy(
                 expose_by_default=True,
                 persist_output=False,
-                required_context_keys=("plan_context", "session_id", "user_id"),
+                required_context_keys=("plan_context", "user_id"),
             ),
         )
 
@@ -66,7 +66,6 @@ class CreateFileTool:
 
     async def execute(self, context: dict[str, Any], **kwargs: Any) -> str:
         plan_context = context.get("plan_context")
-        session_id = context.get("session_id")
         user_id = context.get("user_id")
         if plan_context is None:
             raise ToolExecutionError(reason="Plan Context Missing", detail_reason="create_file 只能在 PlanMode 编排内调用。")
@@ -85,7 +84,6 @@ class CreateFileTool:
 
         plan = Plan(
             plan_id=f"plan_{uuid.uuid4().hex}",
-            session_id=str(session_id),
             user_id=str(user_id),
             file_name=file_name,
             content=content,
@@ -94,7 +92,7 @@ class CreateFileTool:
 
         try:
             resp = await self._ai_asset_client.create_plan(
-                session_id=str(session_id), owner_id=str(user_id), title=file_name,
+                owner_id=str(user_id), title=file_name,
                 content=plan.render_markdown(), steps=plan.steps_payload(),
             )
         except RpcError as e:
@@ -103,7 +101,7 @@ class CreateFileTool:
         plan.resource_id = resp.get("resourceId")
         plan.object_key = resp.get("objectKey")
         plan.content_hash = plan.compute_hash()
-        await self._plan_cache.save(plan.session_id, plan)
+        await self._plan_cache.save(plan.user_id, plan)
 
         plan_context.plan = plan
         plan_context.emit(PlanCreatedEvent(plan_id=plan.plan_id, steps=plan.steps_payload()))

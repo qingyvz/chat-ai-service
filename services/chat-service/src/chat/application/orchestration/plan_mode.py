@@ -44,7 +44,7 @@ class PlanModeStrategy(OrchestrationStrategy):
         max_iterations = ctx.agent_info.spec.agent_max_iterations or settings.AGENT_MAX_ITERATIONS
         plan_ctx = PlanContext()
         scope = ctx.tool_scope.bind("plan_context", plan_ctx)
-        active = await self._load_active(ctx.session_id, ctx.user_id)
+        active = await self._load_active(ctx.user_id)
 
         # 1. 无 plan → 草拟：强制模型调 create_file 产出 plan，待审查
         if active is None:
@@ -83,14 +83,14 @@ class PlanModeStrategy(OrchestrationStrategy):
         async for event in self._drive(ctx, messages, scope, plan_ctx, max_iterations):
             yield event
 
-    async def _load_active(self, session_id: str, user_id: str) -> Optional[Plan]:
-        """活跃计划：先读 Redis 热缓存，未命中回源 ai-asset 并回填缓存"""
-        cached = await self._plan_cache.get(session_id)
+    async def _load_active(self, owner_id: str) -> Optional[Plan]:
+        """活跃计划（owner 维度）：先读 Redis 热缓存，未命中回源 ai-asset 并回填缓存"""
+        cached = await self._plan_cache.get(owner_id)
         if cached is not None:
             return cached
-        active = await self._ai_asset_client.get_active_plan(session_id, user_id)
+        active = await self._ai_asset_client.get_active_plan(owner_id)
         if active is not None:
-            await self._plan_cache.save(session_id, active)
+            await self._plan_cache.save(owner_id, active)
         return active
 
     async def _persist_status(self, plan: Plan, status: str) -> None:
@@ -99,8 +99,8 @@ class PlanModeStrategy(OrchestrationStrategy):
             try:
                 await self._ai_asset_client.update_plan(resource_id=plan.resource_id, status=status)
             except RpcError as e:
-                warn("plan status persist failed.", session_id=plan.session_id, detail=str(e))
-        await self._plan_cache.save(plan.session_id, plan)
+                warn("plan status persist failed.", resource_id=plan.resource_id, detail=str(e))
+        await self._plan_cache.save(plan.user_id, plan)
 
     def _assemble(self, ctx: OrchestrationContext) -> List[ChatMessage]:
         rm = ctx.raw_materials

@@ -17,9 +17,8 @@ class PlanStep(BaseModel):
 
 
 class Plan(BaseModel):
-    """PlanMode 计划文件 DTO：真相源在 ai-asset，本服务持有内存态并热缓存到 Redis"""
+    """PlanMode 计划文件 DTO：真相源在 ai-asset（owner 维度、不绑会话），本服务持有内存态并热缓存到 Redis"""
     plan_id: str
-    session_id: str
     user_id: str
     resource_id: Optional[str] = None
     object_key: Optional[str] = None
