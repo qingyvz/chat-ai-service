@@ -22,7 +22,6 @@ from chat.core.persistence import (
     MongoModelRepository,
     MongoProviderRepository,
     RedisHotContext,
-    RedisSubAgentRepository,
     RedisPlanCache,
 )
 from chat.application.runtime import build_session_runtime
@@ -36,7 +35,7 @@ from chat.application.tools.skill_tools import LoadSkillAssetTool
 from chat.application.tools.skill_tools import LoadSkillTool
 from chat.application.tools.core import ToolRegistry
 from chat.application.tools.session_tools.get_historical_chat_messages_tool import GetHistoricalChatMessagesTool
-from chat.application.tools.subagent_tools import CreateSubAgentTool, CallSubAgentTool
+from chat.application.tools.subagent_tools import CallSubAgentTool
 from chat.application.tools.plan_tools import CreateFileTool, UpdatePlanTool
 from chat.core.config.nacos import nacos_client_manager
 from chat.service_client import FileStorageClient, AIAssetClient, ResourceClient
@@ -81,7 +80,6 @@ class Container(containers.DeclarativeContainer):
     model_repo = providers.Singleton(MongoModelRepository)
     provider_repo = providers.Singleton(MongoProviderRepository)
     hot_context_repo = providers.Singleton(RedisHotContext)
-    subagent_repo = providers.Singleton(RedisSubAgentRepository)
     plan_cache = providers.Singleton(RedisPlanCache)
 
     # 内部 RPC：Nacos 服务发现 + 通用 httpx 客户端 + file-storage typed facade
@@ -154,8 +152,7 @@ class Container(containers.DeclarativeContainer):
         resource_client=resource_client,
         file_loader=oss_file_loader,
     )
-    # subagent 工具（无状态；机制由 runtime 注入 tool_context 的 subagent_spawner 承载）
-    create_subagent_tool = providers.Singleton(CreateSubAgentTool)
+    # subagent 工具（无状态；执行时从 tool_context 取 parent_runtime fork 子轮直调 handle_chat）
     call_subagent_tool = providers.Singleton(CallSubAgentTool)
     # PlanMode 工具（机制由策略经 tool_context 注入的 plan_context 承载）
     create_file_tool = providers.Singleton(
@@ -173,7 +170,6 @@ class Container(containers.DeclarativeContainer):
         search_history_tool,
         load_skill_tool,
         load_skill_asset_tool,
-        create_subagent_tool,
         call_subagent_tool,
         create_file_tool,
         update_plan_tool,
@@ -198,7 +194,6 @@ class Container(containers.DeclarativeContainer):
         tool_registry=tool_registry,
         kafka_producer=kafka_producer,
         skill_matcher=skill_matcher,
-        subagent_repo=subagent_repo,
         ai_asset_client=ai_asset_client,
         plan_cache=plan_cache,
         token_counter=token_counter,

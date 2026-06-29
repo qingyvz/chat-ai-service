@@ -7,12 +7,11 @@ from chat.application.agents import (
     AgentSpec,
     AgentToolAndSkillPolicy,
     DefaultAgentResolver,
-    SubAgentRepository,
 )
 from chat.domain.repositories import SessionRepository
 
-# subagent 自身禁用这两个工具 → 结构上不能再派 subagent
-SUBAGENT_TOOL_NAMES = frozenset({"create_subagent", "call_subagent"})
+# subagent 自身禁用此工具 → 结构上不能再派 subagent
+SUBAGENT_TOOL_NAMES = frozenset({"call_subagent"})
 
 _SUBAGENT_SYSTEM_PROMPT = (
     "You are an execution sub-agent dispatched by an orchestrator. Complete ONLY the single task given, "
@@ -39,18 +38,17 @@ class SessionAgentProvider:
         return await self._agent_resolver.resolve(session.agent_id)
 
 
-class SubAgentProvider:
-    """子任务场景：从 Redis 读回 create_subagent 已落库的 subagent spec"""
+class StaticAgentProvider:
+    """子任务场景：直接返回 call_subagent 当场构造的 subagent spec，不落库"""
 
-    def __init__(self, subagent_repo: SubAgentRepository, subagent_id: str) -> None:
-        self._subagent_repo = subagent_repo
-        self._subagent_id = subagent_id
+    def __init__(self, agent_info: AgentInfo) -> None:
+        self._agent_info = agent_info
 
     async def resolve(self, session_id: str, user_id: str) -> AgentInfo | None:
-        return await self._subagent_repo.get(session_id, self._subagent_id)
+        return self._agent_info
 
 
-def build_subagent_info(parent_spec: AgentSpec, role: str, session_id: str, subagent_id: str) -> AgentInfo:
+def build_subagent_info(parent_spec: AgentSpec, role: str, subagent_id: str) -> AgentInfo:
     """subagent 本质就是个 Agent：执行向 system prompt + 收窄 tool/skill policy（禁 subagent 工具与 skill）+ 继承迭代上限"""
     deny = set(parent_spec.tool_and_skill_policy.deny_tool_names or set()) | set(SUBAGENT_TOOL_NAMES)
     narrowed = AgentToolAndSkillPolicy(

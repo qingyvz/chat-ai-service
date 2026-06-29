@@ -27,7 +27,7 @@ class ChatErrorCode(IErrorCode):
     LLM_GENERATION_FAILED = (50011, "大模型生成失败")
 
     # --- 编排相关 ---
-    SUBAGENT_TOOLS_UNAVAILABLE = (40031, "Plan-and-Execute 需要 create_subagent/call_subagent 工具，但当前 agent 未启用")
+    SUBAGENT_TOOLS_UNAVAILABLE = (40031, "Plan-and-Execute 需要 call_subagent 工具，但当前 agent 未启用")
 
     # --- 记忆相关 ---
     MEMORY_NOT_FOUND = (40001, "目标记忆不存在")
