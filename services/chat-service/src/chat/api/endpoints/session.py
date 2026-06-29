@@ -6,7 +6,7 @@ from typing import Optional
 from chat.api.schemas.session import (
     SessionResponse, CreateSessionRequest, RenameSessionRequest,
     PinSessionRequest, SetSessionAgentRequest, UIMessageResponse,
-    ActivePlanResponse, PlanStepView,
+    TodoListResponse, TodoItemResponse,
 )
 from chat.api.converters import convert_to_ui_messages
 from chat.application.agents import AgentResolver
@@ -42,7 +42,7 @@ async def create_session(
     return R.success(data=SessionResponse.from_entity(created))
 
 
-@router.get("/getActivePlan", response_model=R[Optional[ActivePlanResponse]], status_code=200)
+@router.get("/getActivePlan", response_model=R[Optional[TodoListResponse]], status_code=200)
 @inject
 async def get_active_plan(
         sessionId: str = Query(..., description="会话 ID"),
@@ -60,11 +60,11 @@ async def get_active_plan(
             await plan_cache.save(sessionId, plan)
     if plan is None:
         return R.success(data=None)
-    return R.success(data=ActivePlanResponse(
+    return R.success(data=TodoListResponse(
         planId=plan.plan_id,
         status=plan.status,
         steps=[
-            PlanStepView(id=s.step_id, title=s.title, status=s.status, resultSummary=s.result_summary)
+            TodoItemResponse(id=s.step_id, title=s.title, status=s.status, resultSummary=s.result_summary)
             for s in plan.steps
         ],
     ))

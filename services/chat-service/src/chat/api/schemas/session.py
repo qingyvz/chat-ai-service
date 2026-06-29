@@ -4,18 +4,18 @@ from typing import List, Optional, Any
 from chat.domain.entities import ChatSession
 
 
-class PlanStepView(BaseModel):
+class TodoItemResponse(BaseModel):
     id: str
     title: str
     status: str
     resultSummary: Optional[str] = None
 
 
-class ActivePlanResponse(BaseModel):
-    """会话当前活跃计划视图：供前端刷新后重建 PlanPanel"""
+class TodoListResponse(BaseModel):
+    """活跃计划的前端视图（即 Plan 的出参壳）：供刷新后重建 PlanPanel"""
     planId: str
     status: str
-    steps: List[PlanStepView]
+    steps: List[TodoItemResponse]
 
 
 class CreateSessionRequest(BaseModel):
