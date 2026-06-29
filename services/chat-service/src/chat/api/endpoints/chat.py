@@ -79,8 +79,7 @@ async def _stream_chat(
         user_defined_on_demand_skill_ids=req.user_defined_on_demand_skill_ids,
         user_defined_force_enabled_skill_ids=req.user_defined_force_enabled_skill_ids,
         think_type_override=think_type_override,
-        plan_action=req.plan_action,
-        plan_feedback=req.plan_feedback,
+        plan_review_decision=req.plan_review_decision,
     )
 
     return StreamingResponse(
@@ -129,6 +128,6 @@ async def chat_completions_plan_mode(
         coordinator: AgentTurnRuntime = Depends(Provide[Container.agent_turn_runtime]),
         session_repo: SessionRepository = Depends(Provide[Container.session_repo]),
 ):
-    """PlanMode 编排入口：DTO 与 /completions 一致（含 plan_action / plan_feedback），强制 think_type=PlanMode"""
+    """PlanMode 编排入口：DTO 与 /completions 一致（含 plan_review_decision），强制 think_type=PlanMode"""
     return await _stream_chat(req, background_tasks, user_id, coordinator, session_repo, think_type_override="PlanMode")
 

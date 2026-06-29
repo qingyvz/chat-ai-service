@@ -84,8 +84,7 @@ class AgentTurnRuntime:
         user_defined_on_demand_skill_ids: Optional[Set[str]] = None,
         user_defined_force_enabled_skill_ids: Optional[Set[str]] = None,
         think_type_override: Optional[str] = None,
-        plan_action: Optional[str] = None,
-        plan_feedback: Optional[str] = None,
+        plan_review_decision: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> AsyncIterator[StreamEvent]:
         # agent → 取 spec
@@ -146,8 +145,7 @@ class AgentTurnRuntime:
             ),
             assembler=self._services.assembler,
             tool_scope=tool_scope,
-            plan_action=plan_action,
-            plan_feedback=plan_feedback,
+            plan_review_decision=plan_review_decision,
         )
 
         # 由 think_type 选策略并跑循环；override 优先于 agent spec；runtime 只透传事件 + 事后交 finalizer

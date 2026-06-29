@@ -55,7 +55,7 @@ class PlanModeStrategy(OrchestrationStrategy):
             return
 
         plan_ctx.plan = active
-        action = ctx.plan_action
+        action = ctx.plan_review_decision
 
         # 2. execute（或 executing 中的后续 turn）→ 注入 plan 走 ReAct，模型用 update_plan 翻状态
         if action == "execute" or (action != "change" and active.status == "executing"):
@@ -78,7 +78,7 @@ class PlanModeStrategy(OrchestrationStrategy):
         messages.append(ChatMessage(session_id=ctx.session_id, role=Role.USER, content=change_plan_block(active)))
         messages.append(ChatMessage(
             session_id=ctx.session_id, role=Role.USER,
-            content=change_directive(ctx.plan_feedback or rm.user_query, manually_edited),
+            content=change_directive(rm.user_query, manually_edited),
         ))
         async for event in self._drive(ctx, messages, scope, plan_ctx, max_iterations):
             yield event

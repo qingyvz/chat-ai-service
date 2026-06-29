@@ -15,6 +15,5 @@ class ChatRequest(BaseModel):
     user_defined_deny_tool_names: Optional[Set[str]] = Field(default=None, description="禁用Tool的Name列表")
     user_defined_on_demand_skill_ids: Optional[Set[str]] = Field(default=None, description="用户指定给LLM自动选择的Skill资源ID列表")
     user_defined_force_enabled_skill_ids: Optional[Set[str]] = Field(default=None, description="用户指定给LLM强制启用的Skill资源ID列表")
-    plan_action: Optional[str] = Field(default=None, description="PlanMode 审查决策：execute / change")
-    plan_feedback: Optional[str] = Field(default=None, description="PlanMode change 时的修改建议")
+    plan_review_decision: Optional[str] = Field(default=None, description="PlanMode 审查决策：execute / change（change 的修改建议直接写在 query 里）")
     model_config = {"extra": "ignore"}

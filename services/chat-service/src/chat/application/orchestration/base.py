@@ -35,8 +35,7 @@ class OrchestrationContext:
     tool_scope: ToolScope
     record_messages: List[ChatMessage] = field(default_factory=list)
     usage_tokens: int = 0
-    plan_action: Optional[str] = None       # PlanMode：execute / change
-    plan_feedback: Optional[str] = None      # PlanMode change 时的修改建议
+    plan_review_decision: Optional[str] = None   # PlanMode 审查决策：execute / change
 
 
 class OrchestrationStrategy(ABC):
