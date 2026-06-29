@@ -4,6 +4,20 @@ from typing import List, Optional, Any
 from chat.domain.entities import ChatSession
 
 
+class TodoItemResponse(BaseModel):
+    id: str
+    title: str
+    status: str
+    resultSummary: Optional[str] = None
+
+
+class TodoListResponse(BaseModel):
+    """活跃计划的前端视图（即 Plan 的出参壳）：供刷新后重建 PlanPanel"""
+    planId: str
+    status: str
+    steps: List[TodoItemResponse]
+
+
 class CreateSessionRequest(BaseModel):
     title: Optional[str] = Field(default="New Chat", description="会话标题")
     agent_id: Optional[str] = Field(default=None, description="绑定的 Agent 资源 ID")

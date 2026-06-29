@@ -13,13 +13,13 @@ from chat.application.events import (
     TextStartEvent,
 )
 from chat.application.orchestration.base import OrchestrationContext, OrchestrationStrategy
-from chat.application.orchestration.step_runner import AgentStepRunner
+from chat.application.orchestration.step_runner import ReActStepRunner
 
 
 class ReActStrategy(OrchestrationStrategy):
     """ReAct 编排：assemble_prompt 入口组装 + for 循环逐步委派 AgentStepRunner，行为与重构前等价（回归基准）"""
 
-    def __init__(self, step_runner: AgentStepRunner) -> None:
+    def __init__(self, step_runner: ReActStepRunner) -> None:
         self._step_runner = step_runner
 
     async def run(self, ctx: OrchestrationContext) -> AsyncIterator[StreamEvent]:
@@ -64,7 +64,7 @@ class ReActStrategy(OrchestrationStrategy):
                 yield item
 
             assert step_finish_event is not None
-            ctx.usage_tokens += step_finish_event.usage_tokens
+            ctx.usage_tokens += step_finish_event.token_usage
             if step_finish_event.is_finished:
                 ctx.record_messages.append(step_finish_event.final_assistant_message)
                 return
@@ -90,4 +90,4 @@ class ReActStrategy(OrchestrationStrategy):
             role=Role.ASSISTANT,
             content=warning_text,
         )
-        yield StepFinishEvent(is_finished=True, final_assistant_message=final_message, usage_tokens=0)
+        yield StepFinishEvent(is_finished=True, final_assistant_message=final_message, token_usage=0)

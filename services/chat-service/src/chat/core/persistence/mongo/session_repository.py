@@ -1,11 +1,11 @@
-from typing import List, Tuple
+from typing import Optional, List, Tuple
 from datetime import datetime, timezone
 
 from beanie import PydanticObjectId
 
 from common.core.exceptions import ServiceException
 from chat.domain.repositories import SessionRepository
-from chat.domain.entities import ChatSession
+from chat.domain.entities import ChatSession, ResourceAttachmentRef, TemporaryAttachmentRef
 from chat.domain.error_codes import ChatErrorCode
 
 
@@ -30,6 +30,12 @@ class MongoSessionRepository(SessionRepository):
         if session is None:
             raise ServiceException(ChatErrorCode.SESSION_NOT_FOUND)
         return session
+
+    async def get_session_attachments(self, session_id: str, user_id: str) -> Tuple[Optional[List[TemporaryAttachmentRef]], Optional[List[ResourceAttachmentRef]]]:
+        session = await self.get_session_for_user(session_id, user_id)
+        temporary_refs = [ref for ref in session.temporary_attachment_refs if not ref.deleted]
+        resource_attachments = [ref for ref in session.resource_attachment_refs if not ref.deleted]
+        return temporary_refs, resource_attachments
 
     async def list_sessions_for_user(self, user_id: str, page: int, size: int) -> Tuple[List[ChatSession], int]:
         """分页拉取用户会话列表，按 updated_at 降序，返回 (当页列表, 总数)"""

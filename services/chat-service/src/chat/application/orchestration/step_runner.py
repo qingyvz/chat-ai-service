@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from typing import AsyncIterator, List, Union
 
 from chat.application.tools import ToolScope
@@ -23,8 +24,23 @@ from chat.application.events import (
 from chat.application.orchestration.delta_interpreter import StepDeltaInterpreter
 
 
-class AgentStepRunner:
-    """单步原语：一次 LLM turn + 工具执行，被各编排策略（ReAct / Plan-Execute Executor）共用"""
+class StepRunner(ABC):
+    """单步原语抽象：每种编排策略持有自己的 step_runner，定义"一个 step"的执行语义"""
+
+    @abstractmethod
+    def run(
+        self,
+        messages: List[ChatMessage],
+        session_id: str,
+        model_request: ModelRequestInfo,
+        iteration: int,
+        tool_scope: ToolScope,
+    ) -> AsyncIterator[Union[StreamEvent, StepFinishEvent]]:
+        ...
+
+
+class ReActStepRunner(StepRunner):
+    """ReAct 步语义：一次 LLM turn + 工具执行（重构前的 AgentStepRunner，回归基准）"""
 
     def __init__(self, llm_provider_resolver: LLMProviderResolver, token_counter: TokenCounter) -> None:
         self._llm_provider_resolver = llm_provider_resolver
@@ -92,7 +108,7 @@ class AgentStepRunner:
 
         # 没有工具调用 → 结束本轮（也结束整个循环）
         if not interpreter.tool_calls:
-            yield StepFinishEvent(is_finished=True, final_assistant_message=assistant_msg, usage_tokens=token_usage)
+            yield StepFinishEvent(is_finished=True, final_assistant_message=assistant_msg, token_usage=token_usage)
             return
 
         # 有工具调用 → 进入工具阶段
@@ -131,4 +147,4 @@ class AgentStepRunner:
             )
 
         # 结束本轮并继续下一轮模型推理（因为调用工具）
-        yield StepFinishEvent(is_finished=False, intermediate_messages=new_messages, usage_tokens=token_usage)
+        yield StepFinishEvent(is_finished=False, intermediate_messages=new_messages, token_usage=token_usage)

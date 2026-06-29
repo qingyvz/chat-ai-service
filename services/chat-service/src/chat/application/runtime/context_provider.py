@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Protocol, Tuple
+from typing import List, Optional, Protocol
 
 from common.logger import error, warn
 from chat.core.config.app_settings import settings
@@ -157,11 +157,8 @@ class SessionContextProvider:
         return windowed_messages
 
 
-class SubAgentContextProvider:
-    """子任务场景：隔离上下文——无会话历史/摘要，前序步骤结论作为 relevant_facts 注入"""
-
-    def __init__(self, prior_results: List[Tuple[str, str]]) -> None:
-        self._prior_results = prior_results
+class IsolatedContextProvider:
+    """子任务场景：隔离上下文——无会话历史/长期记忆/摘要，子任务自带完整信息"""
 
     async def load(
         self,
@@ -171,10 +168,9 @@ class SubAgentContextProvider:
         memory_policy: AgentMemoryPolicy,
         prompt_budget_tokens: int,
     ) -> SessionContext:
-        prior_facts = [f"{title}: {summary}" for title, summary in self._prior_results]
         return SessionContext(
             history_messages=[],
-            relevant_facts=prior_facts,
+            relevant_facts=[],
             session_summary=None,
             windowed_history_messages=None,
         )

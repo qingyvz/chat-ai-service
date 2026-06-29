@@ -143,8 +143,8 @@ class SessionTurnFinalizer:
         await self.provider_repo.increment_usage(
             provider_id=resolved_model.provider_id,
             user_id=resolved_model.owner_user_id,
-            usage_tokens=usage_tokens,
-            billable_usage_tokens=billable_usage_tokens,
+            token_usage=usage_tokens,
+            billable_token_usage=billable_usage_tokens,
         )
 
         if resolved_model.scope != ModelScope.SYSTEM:

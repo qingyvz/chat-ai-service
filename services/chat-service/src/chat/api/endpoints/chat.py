@@ -79,6 +79,7 @@ async def _stream_chat(
         user_defined_on_demand_skill_ids=req.user_defined_on_demand_skill_ids,
         user_defined_force_enabled_skill_ids=req.user_defined_force_enabled_skill_ids,
         think_type_override=think_type_override,
+        plan_review_decision=req.plan_review_decision,
     )
 
     return StreamingResponse(
@@ -118,15 +119,15 @@ async def chat_completions(
     return await _stream_chat(req, background_tasks, user_id, coordinator, session_repo)
 
 
-@router.post("/completions/plan-execute")
+@router.post("/completions/plan-mode")
 @inject
-async def chat_completions_plan_execute(
+async def chat_completions_plan_mode(
         req: ChatRequest,
         background_tasks: BackgroundTasks,
         user_id: str = Depends(require_login),
         coordinator: AgentTurnRuntime = Depends(Provide[Container.agent_turn_runtime]),
         session_repo: SessionRepository = Depends(Provide[Container.session_repo]),
 ):
-    """Plan-and-Execute 编排入口：DTO 与 /completions 一致，仅强制 think_type=PlanAndExecute"""
-    return await _stream_chat(req, background_tasks, user_id, coordinator, session_repo, think_type_override="PlanAndExecute")
+    """PlanMode 编排入口：DTO 与 /completions 一致（含 plan_review_decision），强制 think_type=PlanMode"""
+    return await _stream_chat(req, background_tasks, user_id, coordinator, session_repo, think_type_override="PlanMode")
 

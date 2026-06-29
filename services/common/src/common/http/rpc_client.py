@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Mapping, Optional
 
 import httpx
@@ -90,8 +91,14 @@ class RpcClient:
         user_id = SecurityContextHolder.get_user_id()
         if user_id:
             merged_headers[SecurityConstants.HEADER_USER_ID] = user_id
-            merged_headers[SecurityConstants.HEADER_IDENTITY_TYPE] = SecurityContextHolder.set_identity_type()
-            [SecurityConstants.HEADER_GROUP_ROLE_MAP] = SecurityContextHolder.set_group_role_map()
+            identity_type = SecurityContextHolder.get_identity_type()
+            if identity_type is not None:
+                merged_headers[SecurityConstants.HEADER_IDENTITY_TYPE] = str(identity_type.code)
+            group_role_map = SecurityContextHolder.get_group_role_map()
+            if group_role_map:
+                merged_headers[SecurityConstants.HEADER_GROUP_ROLE_MAP] = json.dumps(
+                    {gid: role.code for gid, role in group_role_map.items()}
+                )
 
         # 传递 developer 头
         developer = GrayContextHolder.get_developer_tag()

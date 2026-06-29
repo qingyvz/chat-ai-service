@@ -1,12 +1,17 @@
 from fastapi import APIRouter, Depends, Query
 from dependency_injector.wiring import inject, Provide
 
+from typing import Optional
+
 from chat.api.schemas.session import (
     SessionResponse, CreateSessionRequest, RenameSessionRequest,
     PinSessionRequest, SetSessionAgentRequest, UIMessageResponse,
+    TodoListResponse, TodoItemResponse,
 )
 from chat.api.converters import convert_to_ui_messages
 from chat.application.agents import AgentResolver
+from chat.core.persistence import RedisPlanCache
+from chat.service_client import AIAssetClient
 from chat.domain.entities import ChatSession
 from chat.domain.error_codes import ChatErrorCode
 from chat.domain.repositories import SessionRepository, MessageRepository
@@ -35,6 +40,31 @@ async def create_session(
         session.agent_version = agent.version
     created = await session_repo.create_session(session)
     return R.success(data=SessionResponse.from_entity(created))
+
+
+@router.get("/getActivePlan", response_model=R[Optional[TodoListResponse]], status_code=200)
+@inject
+async def get_active_plan(
+        user_id: str = Depends(require_login),
+        ai_asset_client: AIAssetClient = Depends(Provide[Container.ai_asset_client]),
+        plan_cache: RedisPlanCache = Depends(Provide[Container.plan_cache]),
+):
+    """取当前用户的活跃计划（owner 维度、不绑会话）：先读 Redis 热缓存，未命中回源 ai-asset，供前端刷新后重建 PlanPanel"""
+    plan = await plan_cache.get(user_id)
+    if plan is None:
+        plan = await ai_asset_client.get_active_plan(user_id)
+        if plan is not None:
+            await plan_cache.save(user_id, plan)
+    if plan is None:
+        return R.success(data=None)
+    return R.success(data=TodoListResponse(
+        planId=plan.plan_id,
+        status=plan.status,
+        steps=[
+            TodoItemResponse(id=s.step_id, title=s.title, status=s.status, resultSummary=s.result_summary)
+            for s in plan.steps
+        ],
+    ))
 
 
 @router.get("/listSessions", response_model=R[PageResult[SessionResponse]])

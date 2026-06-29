@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from beanie import Document
 from pydantic import Field
@@ -11,17 +11,11 @@ class ProviderScope(str, Enum):
     USER = "USER"      # 用户自定义供应商
 
 class ProviderType(str, Enum):
-    # LLM
-    OPENAI_COMPATIBLE_LLM = "OPENAI_COMPATIBLE_LLM"
-    LITELLM_OPENAI_COMPATIBLE = "LITELLM_OPENAI_COMPATIBLE"
     ALIBABA = "ALIBABA"
     OPENAI = "OPENAI"
     ANTHROPIC = "ANTHROPIC"
     GOOGLE = "GOOGLE"
-
-    # SEARCH_ENGINE
-    BRAVE_SEARCH_ENGINE = "BRAVE_SEARCH_ENGINE"
-    TAVILY_SEARCH_ENGINE = "TAVILY_SEARCH_ENGINE"
+    LITELLM_OPENAI_COMPATIBLE = "OPENAI_COMPATIBLE"
 
 
 class Provider(Document):
@@ -30,18 +24,18 @@ class Provider(Document):
     """
     name: str = Field(..., description="供应商显示名称")
 
-    api_base_url: str = Field(..., description="API 网关地址")
+    base_url: Optional[str] = Field(default=None, description="API 网关地址")
     api_key: str = Field(..., description="鉴权密钥")
     api_key_fingerprint: Optional[str] = Field(default=None, description="鉴权密钥指纹")
 
     scope: ProviderScope = Field(default=ProviderScope.SYSTEM, description="供应商作用域")
     owner_user_id: Optional[str] = Field(default=None, description="USER 作用域下的归属用户 ID")
 
-    type: ProviderType = Field(default=ProviderType.OPENAI_COMPATIBLE_LLM, description="供应商能力类型")
+    type: ProviderType = Field(default=ProviderType.LITELLM_OPENAI_COMPATIBLE, description="供应商类型")
 
     is_active: bool = Field(default=True, description="是否启用")
-    usage_tokens: int = Field(default=0, description="累计原始 token 用量")
-    billable_usage_tokens: int = Field(default=0, description="累计可计费 token 用量")
+    token_usage: int = Field(default=0, description="累计原始 token 用量")
+    billable_token_usage: int = Field(default=0, description="累计可计费 token 用量")
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

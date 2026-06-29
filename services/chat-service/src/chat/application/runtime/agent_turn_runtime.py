@@ -1,5 +1,5 @@
-import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
 from beanie import PydanticObjectId
 from fastapi import BackgroundTasks
@@ -13,19 +13,20 @@ from chat.domain.interfaces.llm import TextCompletionProvider
 from chat.domain.interfaces.memory import MemoryProvider
 from chat.domain.error_codes import ChatErrorCode
 from chat.domain.repositories import SessionRepository, MessageRepository, HotContextRepository, ModelRepository, ProviderRepository
-from chat.domain.repositories.model_repo import ModelRequestInfo
-from chat.application.agents import AgentResolver, AgentSpec, SubAgentRepository
-from chat.application.events import ErrorEvent, StepFinishEvent, StreamEvent
+from chat.core.persistence import RedisPlanCache
+from chat.service_client import AIAssetClient
+from chat.application.agents import AgentResolver
+from chat.application.events import ErrorEvent, StreamEvent
 from chat.application.chat_context_assembler import ChatContextAssembler
 from chat.application.chat_turn_finalizer import SessionTurnFinalizer
 from chat.application.llm_provider_resolver import LLMProviderResolver
 from chat.application.tools.skill_tools.utils.skill_matcher import SkillMatcher
 from chat.application.tools.core import ToolRegistry
-from chat.application.orchestration import AgentStepRunner, OrchestrationContext, RawMaterials, StrategyFactory
+from chat.application.orchestration import OrchestrationContext, RawMaterials, StrategyFactory
 from chat.application.token_counter import TokenCounter
-from chat.application.runtime.agent_provider import SessionAgentProvider, SubAgentProvider, build_subagent_info
-from chat.application.runtime.context_provider import SessionContextProvider, SubAgentContextProvider
-from chat.application.runtime.model_resolver import SessionModelResolver, InheritedModelResolver
+from chat.application.runtime.agent_provider import SessionAgentProvider
+from chat.application.runtime.context_provider import SessionContextProvider
+from chat.application.runtime.model_resolver import SessionModelResolver
 from chat.application.runtime.tool_scope_provider import ToolScopeProvider
 
 
@@ -39,35 +40,35 @@ def _merge_runtime_options(defaults: dict, overrides: dict) -> dict:
     return result
 
 
+@dataclass(frozen=True)
+class RuntimeServices:
+    """与环境无关的共享服务一坨；根轮装配一次，子任务轮经 tool_context 透传给 call_subagent 复用"""
+    tool_scope_provider: ToolScopeProvider
+    assembler: ChatContextAssembler
+    strategy_factory: StrategyFactory
+    llm_resolver: LLMProviderResolver
+    finalizer: SessionTurnFinalizer
+
+
 class AgentTurnRuntime:
     """
     Agent 轮编排模板：按 agent → model → context → 能力 顺序备料，交策略跑循环，再交 finalizer 扫尾。
-    根轮注入 Session* 三件 + subagent_spawner；子任务轮注入 SubAgent* 三件、spawner=None，模板不变。
+    构造 = 共享服务一坨（services）+ 随环境替换的 agent/model/context 三件；call_subagent 拿 services 自行换三件组装子轮。
     handle_chat 产出领域 StreamEvent；SSE 翻译留给 API 层（便于作为子 runtime 嵌套，事件只翻译一次）。
     """
 
     def __init__(
         self,
         *,
+        services: RuntimeServices,
         agent_provider,
         model_resolver,
         context_provider,
-        tool_scope_provider: ToolScopeProvider,
-        assembler: ChatContextAssembler,
-        strategy_factory: StrategyFactory,
-        llm_resolver: LLMProviderResolver,
-        finalizer,
-        subagent_spawner: Optional["SubAgentSpawner"] = None,
     ) -> None:
+        self._services = services
         self._agent_provider = agent_provider
         self._model_resolver = model_resolver
         self._context_provider = context_provider
-        self._tool_scope_provider = tool_scope_provider
-        self._assembler = assembler
-        self._strategy_factory = strategy_factory
-        self._llm_resolver = llm_resolver
-        self._finalizer = finalizer
-        self._subagent_spawner = subagent_spawner
 
     async def handle_chat(
         self,
@@ -83,6 +84,7 @@ class AgentTurnRuntime:
         user_defined_on_demand_skill_ids: Optional[Set[str]] = None,
         user_defined_force_enabled_skill_ids: Optional[Set[str]] = None,
         think_type_override: Optional[str] = None,
+        plan_review_decision: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> AsyncIterator[StreamEvent]:
         # agent → 取 spec
@@ -95,7 +97,7 @@ class AgentTurnRuntime:
         )
 
         # runtime_options 校验：按 provider manifest 合并默认值并 jsonschema 校验
-        manifest = self._llm_resolver.runtime_options_manifest(model.provider_type)
+        manifest = self._services.llm_resolver.runtime_options_manifest(model.provider_type)
         runtime_options = _merge_runtime_options(manifest.get("defaults") or {}, model.runtime_options or {})
         try:
             Draft202012Validator.check_schema(manifest["json_schema"])
@@ -110,13 +112,13 @@ class AgentTurnRuntime:
             memory_policy=spec.memory_policy, prompt_budget_tokens=prompt_budget_tokens,
         )
 
-        # 能力 → skill 匹配 + 派生 tool_scope；把 spawner/父模型/父 spec 注入 tool_context 供 subagent 工具读取
+        # 能力 → skill 匹配 + 派生 tool_scope；把共享服务/父模型/父 spec 注入 tool_context 供 call_subagent 自行组装子轮
         runtime_context: Dict[str, Any] = {
-            "subagent_spawner": self._subagent_spawner,
+            "runtime_services": self._services,
             "parent_model": model,
             "parent_agent_spec": spec,
         }
-        tool_scope, available_skills = await self._tool_scope_provider.resolve(
+        tool_scope, available_skills = await self._services.tool_scope_provider.resolve(
             session_id=session_id, user_id=user_id, user_query=user_query,
             tool_and_skill_policy=spec.tool_and_skill_policy,
             session_summary=session_context.session_summary,
@@ -141,12 +143,13 @@ class AgentTurnRuntime:
                 frontend_states=frontend_states,
                 available_skills=available_skills,
             ),
-            assembler=self._assembler,
+            assembler=self._services.assembler,
             tool_scope=tool_scope,
+            plan_review_decision=plan_review_decision,
         )
 
         # 由 think_type 选策略并跑循环；override 优先于 agent spec；runtime 只透传事件 + 事后交 finalizer
-        strategy = self._strategy_factory.create(think_type_override or spec.think_policy.think_type)
+        strategy = self._services.strategy_factory.create(think_type_override or spec.think_policy.think_type)
         try:
             async for event in strategy.run(ctx):
                 yield event
@@ -156,7 +159,7 @@ class AgentTurnRuntime:
             return
 
         # 扫尾（Session 异步登记 background_tasks；SubAgent inline 写 Redis transcript）
-        await self._finalizer.finalize(
+        await self._services.finalizer.finalize(
             background_tasks=background_tasks,
             user_id=user_id,
             session_id=session_id,
@@ -168,67 +171,6 @@ class AgentTurnRuntime:
             windowed_history_messages=session_context.windowed_history_messages,
             session_summary=session_context.session_summary,
         )
-
-
-class SubAgentSpawner:
-    """承载 subagent 机制：create 落库 spec，call 跑子 runtime 到结束并返回结论；被 create_subagent/call_subagent 两个 tool 调用"""
-
-    def __init__(
-        self,
-        *,
-        step_runner: AgentStepRunner,
-        text_provider: TextCompletionProvider,
-        resolver: LLMProviderResolver,
-        assembler: ChatContextAssembler,
-        tool_scope_provider: ToolScopeProvider,
-        subagent_repo: SubAgentRepository,
-        finalizer: SessionTurnFinalizer,
-        llm_resolver: LLMProviderResolver,
-    ) -> None:
-        self._assembler = assembler
-        self._tool_scope_provider = tool_scope_provider
-        self._subagent_repo = subagent_repo
-        self._finalizer = finalizer  # subagent 复用同一个 finalizer（background_tasks=None → inline 计费）
-        self._llm_resolver = llm_resolver
-        self._react_factory = StrategyFactory(step_runner, text_provider, resolver)
-
-    async def create(self, *, session_id: str, parent_spec: AgentSpec, role: str) -> str:
-        """造一个收窄的 subagent spec 落 Redis，返回 subagent_id"""
-        subagent_id = f"subagent_{uuid.uuid4().hex[:8]}"
-        await self._subagent_repo.save(
-            session_id, subagent_id, build_subagent_info(parent_spec, role, session_id, subagent_id),
-        )
-        return subagent_id
-
-    async def call(
-        self,
-        *,
-        session_id: str,
-        user_id: str,
-        subagent_id: str,
-        parent_model: ModelRequestInfo,
-        task: str,
-        prior_results: List[Tuple[str, str]],
-    ) -> str:
-        """用同一 AgentTurnRuntime 模板（SubAgent* 三件）跑子任务到结束，返回最终结论文本"""
-        sub_runtime = AgentTurnRuntime(
-            agent_provider=SubAgentProvider(self._subagent_repo, subagent_id),
-            model_resolver=InheritedModelResolver(parent_model),
-            context_provider=SubAgentContextProvider(prior_results),
-            tool_scope_provider=self._tool_scope_provider,
-            assembler=self._assembler,
-            strategy_factory=self._react_factory,
-            llm_resolver=self._llm_resolver,
-            finalizer=self._finalizer,
-            subagent_spawner=None,
-        )
-        final_text = ""
-        async for event in sub_runtime.handle_chat(
-            user_id=user_id, session_id=session_id, user_query=task, background_tasks=None,
-        ):
-            if isinstance(event, StepFinishEvent) and event.is_finished and event.final_assistant_message is not None:
-                final_text = event.final_assistant_message.content or final_text
-        return final_text
 
 
 def build_session_runtime(
@@ -244,32 +186,26 @@ def build_session_runtime(
     tool_registry: ToolRegistry,
     kafka_producer: KafkaProducerClient,
     skill_matcher: SkillMatcher,
-    subagent_repo: SubAgentRepository,
+    ai_asset_client: AIAssetClient,
+    plan_cache: RedisPlanCache,
     token_counter: TokenCounter,
     agent_resolver: AgentResolver | None = None,
 ) -> AgentTurnRuntime:
-    """装配会话根轮：Session* 三件 + 共享服务（resolver 多 provider）+ subagent_spawner（供 subagent 工具调用）"""
-    assembler = ChatContextAssembler()
-    tool_scope_provider = ToolScopeProvider(skill_matcher, tool_registry)
-    step_runner = AgentStepRunner(llm_resolver, token_counter)
-    finalizer = SessionTurnFinalizer(
-        llm=text_provider, memory=memory,
-        message_repo=message_repo, session_repo=session_repo, hot_context_repo=hot_context_repo,
-        provider_repo=provider_repo, kafka_producer=kafka_producer,
-    )
-    spawner = SubAgentSpawner(
-        step_runner=step_runner, text_provider=text_provider, resolver=llm_resolver, assembler=assembler,
-        tool_scope_provider=tool_scope_provider, subagent_repo=subagent_repo,
-        finalizer=finalizer, llm_resolver=llm_resolver,  # subagent 复用同一个 finalizer
+    """装配会话根轮：共享服务一坨（子任务轮由 call_subagent 复用）+ Session* 三件"""
+    services = RuntimeServices(
+        tool_scope_provider=ToolScopeProvider(skill_matcher, tool_registry),
+        assembler=ChatContextAssembler(),
+        strategy_factory=StrategyFactory(llm_resolver, token_counter, text_provider, ai_asset_client, plan_cache),
+        llm_resolver=llm_resolver,
+        finalizer=SessionTurnFinalizer(
+            llm=text_provider, memory=memory,
+            message_repo=message_repo, session_repo=session_repo, hot_context_repo=hot_context_repo,
+            provider_repo=provider_repo, kafka_producer=kafka_producer,
+        ),
     )
     return AgentTurnRuntime(
+        services=services,
         agent_provider=SessionAgentProvider(agent_resolver, session_repo),
         model_resolver=SessionModelResolver(model_repo),
         context_provider=SessionContextProvider(memory, message_repo, session_repo, hot_context_repo),
-        tool_scope_provider=tool_scope_provider,
-        assembler=assembler,
-        strategy_factory=StrategyFactory(step_runner, text_provider, llm_resolver),
-        llm_resolver=llm_resolver,
-        finalizer=finalizer,
-        subagent_spawner=spawner,
     )

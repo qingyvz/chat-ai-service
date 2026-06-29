@@ -32,7 +32,7 @@ class ProviderRepository(ABC):
         self,
         provider_id: PydanticObjectId,
         user_id: Optional[str],
-        usage_tokens: int,
-        billable_usage_tokens: int = 0,
+        token_usage: int,
+        billable_token_usage: int = 0,
     ) -> None:
         pass

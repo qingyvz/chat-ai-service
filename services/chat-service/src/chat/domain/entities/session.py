@@ -1,8 +1,28 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 from beanie import Document
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pymongo import IndexModel, ASCENDING, DESCENDING
+
+class AttachmentRef(BaseModel):
+    """附件"""
+    attachment_id: str
+    attachment_name: str
+    deleted: bool = False
+
+
+class TemporaryAttachmentRef(AttachmentRef):
+    """临时附件引用"""
+    object_key: str = ""
+    extension: str
+    file_size: int
+    mime_type: Optional[str] = None
+
+
+class ResourceAttachmentRef(AttachmentRef):
+    """文档库资源引用"""
+    resource_id: str
+    resource_type: str
 
 
 class ChatSession(Document):
@@ -11,6 +31,8 @@ class ChatSession(Document):
     title: str = "New Chat"
     is_pinned: bool = False
     pinned_at: Optional[datetime] = None
+    temporary_attachment_refs: List[TemporaryAttachmentRef] = Field(default_factory=list)
+    resource_attachment_refs: List[ResourceAttachmentRef] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     current_summary: Optional[str] = None
